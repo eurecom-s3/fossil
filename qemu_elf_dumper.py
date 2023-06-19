@@ -48,7 +48,7 @@ def ctrl_c_handler(sig, frame):
     mem_regions_raw = qemu_monitor.cmd("human-monitor-command", {"command-line": "info mtree -f"})["return"]
     mem_regions = split_mtree_data(mem_regions_raw)
     mem_regions_data = [(x[0], x[3]) for x in mem_regions if x[2] != "ram"]
-    machine_data = {"QEMUArchitecture": architecture,
+    machine_data = {"Architecture": architecture,
                     "Uptime": uptime,
                     "CPURegisters": registers,
                     "MemoryMappedDevices": mem_regions_data
@@ -247,7 +247,9 @@ def make_program_header(elf_h, notes, mem_regions):
 
 def extract_registers_values(gdb_message):
     regs = {}
-    expr = re.compile(r"(?P<reg>\w+)\s+(?P<value>0x[0-9abcdef]+)\s*.+\\n")
+    # expr = re.compile(r"(?P<reg>\w+)\s+(?P<value>0x[0-9abcdef]+)\s*.+\\n")
+    expr = re.compile(r"(?P<reg>\w+)\s+(?P<value>0x[0-9a-fA-F]+)\s+\[.+\]")
+
 
     for msg in gdb_message:
 
