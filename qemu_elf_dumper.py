@@ -246,21 +246,23 @@ def make_program_header(elf_h, notes, mem_regions):
     return p_header
 
 def extract_registers_values(gdb_message):
-    regs = {}
-    # expr = re.compile(r"(?P<reg>\w+)\s+(?P<value>0x[0-9abcdef]+)\s*.+\\n")
-    expr = re.compile(r"(?P<reg>\w+)\s+(?P<value>0x[0-9a-fA-F]+)\s+\[.+\]")
-
+    registers = {}
+    expr = re.compile(r"\S+")
 
     for msg in gdb_message:
-
         if msg["message"] == "done":
             continue
+        if msg["type"] == "log":
+            continue
+        parsed_payload = expr.findall(msg["payload"])
+        try:
+            reg = parsed_payload[0]
+            value = int(parsed_payload[1], 16)
+        except ValueError:
+            continue
 
-        parsed_payload = expr.fullmatch(msg["payload"])
-        if parsed_payload:
-            regs[parsed_payload.group("reg")] = int(parsed_payload.group("value"), 16)
-
-    return regs
+        registers[reg] = value
+    return registers
 
 def main():
     global start_time_g
