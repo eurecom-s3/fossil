@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 
 import argparse
-from bisect import bisect_left, bisect_right
+from bisect import bisect_left 
 from copy import deepcopy
-from multiprocessing.dummy import Array
-from os import listdir
-from os.path import isfile, join
 from compress_pickle import load as load_c 
 from compress_pickle import dump as dump_c
 import ctypes
@@ -16,19 +13,9 @@ import numpy as np
 import sortednp as snp
 from trees import tree_elements, tree_elements_breadth 
 from multiprocessing import Pool 
-from pickle import dump 
-from itertools import chain
-from IPython import embed
 from objects import LinkedList, DoubleLinkedList, PointersGroup, Tree, PtrsArray, MemoryObject
 from elftools.elf.elffile import ELFFile
-import glob, os
-from itertools import chain
-from sortedcontainers import SortedSet
-import cProfile
 from typing import Dict, List, Any, Set
-import networkx as nx
-from tqdm.contrib.concurrent import process_map
-from statistics import mode
 
 convf = None
 aconvf = None
@@ -252,6 +239,7 @@ def main():
     global top_offset
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('elf_file', type=str, help='ELF system dump')
     parser.add_argument('data_dir', type=str, help='Dataset directory')
     parser.add_argument("-max_size", type=int, default=8192, help="Maximum structure size")
     parser.add_argument("-debug", action="store_true", default=False)
@@ -259,10 +247,10 @@ def main():
 
     # Brutal, based on extension
     print("Determine CPU features...")
-    elf_filename = glob.glob(args.data_dir + "*.elf")
-    with open(list(elf_filename)[0], "rb") as f:
+    elf_filename = args.elf_file
+    with open(elf_filename, "rb") as f:
         elffile = ELFFile(f)
-        if elffile.get_machine_arch() == 'x86': #  TODO: support other arch
+        if elffile.get_machine_arch() == '386': #  TODO: support other arch
             convf = lambda x: ctypes.c_uint32(x).value
             aconvf = lambda x: ctypes.c_int32(x).value
             ptr_size = 4
@@ -280,7 +268,7 @@ def main():
 
     # Load datafiles
     print("Load data files...")
-    elf_filename = list(elf_filename)[0]
+    elf_filename = args.elf_file
     ptrs = load_c(args.data_dir + "/extracted_ptrs.lzma")
     v2o = load_c(args.data_dir + "/extracted_v2o.lzma")
     btm = load_c(args.data_dir + "/extracted_btm.lzma")

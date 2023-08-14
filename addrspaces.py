@@ -216,7 +216,7 @@ class ELFDump:
                         continue
 
                     # Suppose only one deadcode note
-                    self.machine_data = json.loads(note["n_desc"].rstrip("\x00"))
+                    self.machine_data = json.loads(note["n_desc"].rstrip(b"\x00"))
                     self.machine_data["Endianness"] = "little" if elf_file.header["e_ident"].EI_DATA == "ELFDATA2LSB" else "big"
                     self.machine_data["Architecture"] = "_".join(elf_file.header["e_machine"].split("_")[1:])
             else:
@@ -1114,6 +1114,8 @@ class IntelTranslator(AddressTranslator):
         self.nxe = nxe
         self.smep = smep
         self.minimum_page = 0x1000
+
+        logging.debug(f"Type: {type(self)}, MAX_PHY: {self.mphy}, WP {self.wp}, AC {self.ac}, SMAP {self.smap}, SMEP {self.smep}, NXE {self.nxe}, DTB {hex(self.dtb)}")
 
         print("Creating resolution trees...")
         self._reconstruct_mappings(self.dtb, upmask=[[False, True, True]])

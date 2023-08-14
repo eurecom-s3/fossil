@@ -7,7 +7,6 @@ from datetime import datetime
 from pygdbmi.gdbcontroller import GdbController, DEFAULT_GDB_LAUNCH_COMMAND
 import os
 import errno
-import pickle
 import re
 import json
 import shutil
@@ -29,7 +28,7 @@ def ctrl_c_handler(sig, frame):
     global dump_fifo
 
     uptime = (datetime.now() - start_time_g).total_seconds()
-    print("\n\nStop the machine, save registers and dump memory")
+    print("\n\nSave registers and dump memory")
 
     # Stop machine, grab registers values and dump the memory
     qemu_monitor.cmd("stop", {})
@@ -247,16 +246,14 @@ def make_program_header(elf_h, notes, mem_regions):
 
 def extract_registers_values(gdb_message):
     regs = {}
-    # expr = re.compile(r"(?P<reg>\w+)\s+(?P<value>0x[0-9abcdef]+)\s*.+\\n")
-    expr = re.compile(r"(?P<reg>\w+)\s+(?P<value>0x[0-9a-fA-F]+)\s+\[.+\]")
+    expr = re.compile(r"(?P<reg>\w+)\s+(?P<value>0x[0-9a-fA-F]+).+")
 
 
     for msg in gdb_message:
 
         if msg["message"] == "done":
             continue
-
-        parsed_payload = expr.fullmatch(msg["payload"])
+        parsed_payload = expr.fullmatch(msg["payload"].strip())
         if parsed_payload:
             regs[parsed_payload.group("reg")] = int(parsed_payload.group("value"), 16)
 

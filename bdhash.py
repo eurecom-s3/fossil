@@ -4,7 +4,7 @@ import warnings
 
 import numpy as np
 
-warnings.filterwarnings('ignore', 'overflow encountered in ulong_scalars', RuntimeWarning, __name__)
+warnings.filterwarnings('ignore', 'overflow encountered in', RuntimeWarning, __name__)
 
 
 def _inverse(x, m):

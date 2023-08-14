@@ -3,7 +3,6 @@ from ghidra.program.model.block import SimpleBlockModel
 from ghidra.util.task import TaskMonitor
 from ghidra.program.model.listing import Instruction
 import json
-import ctypes
 
 args = getScriptArgs()
 if len(args) < 1:
@@ -38,5 +37,3 @@ for func in funcs:
 
 
 json.dump((valid_symbols, functions), open(out_filename, "w"))
-
-

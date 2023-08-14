@@ -143,7 +143,7 @@ def one_higher(trees, ptrs, o2t):
 
 
 def len_two_chains(offsets, pointer_set):
-    res = da.from_array(offsets, 1).map_blocks(get_len2_chains, pointer_set).compute()
+    res = da.from_array(offsets, 1).map_blocks(get_len2_chains, pointer_set, new_axis=1).compute()
     res = res[np.argsort(res[:, 1], kind='mergesort')]
     return sort_using_first(res.T, 'stable')
 

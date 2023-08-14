@@ -7,13 +7,10 @@ from compress_pickle import dump, load
 from addrspaces import ELFDump, get_virtspace
 import functools
 import logging
-from threading import Timer
-import os
-import signal
 import subprocess
 import ctypes
 from pathlib import Path
-
+import os
 
 def stop_radare(a,b):
     raise Exception
@@ -29,8 +26,14 @@ def main():
     parser.add_argument('--ignore_page', help="Physical page to be ignored during the virtual-to-physical mapping (can be repeated)", action='append', type=functools.partial(int, base=0))
     parser.add_argument('--debug', help="Enable debug printer", default=False, action="store_true")
     parser.add_argument('--ip', help="Look for network packets/structs containing this IP address (format xxx.xxx.xxx.xxx)", action="append", type=str, default=[])
+    parser.add_argument('--ghidra', help="Path to GHIDRA installation", type=str, default=os.getenv("GHIDRA_PATH"))
     # parser.add_argument('--mac', help="Look for network packets/structs containing this MAC address (format AA:BB:CC:DD:EE:FF)", action="append", type=str, default=[])
     args = parser.parse_args()
+
+    ghidra_path = args.ghidra
+    if ghidra_path is None:
+        print("Please use --ghidra option or set GHIDRA_PATH environment variable")
+        exit(1)
 
     if not args.ignore_page:
         args.ignore_page = []
@@ -47,6 +50,9 @@ def main():
     print("Load ELF...")
     phy_elf = ELFDump(args.dump_elf)
     
+    arch = phy_elf.get_machine_data()["Architecture"]
+    print(f"Architecture: {arch}")
+
     print("Get virtspace...")
     virtspace = get_virtspace(phy_elf, args.ignore_page)
 
@@ -64,13 +70,15 @@ def main():
     # Collect addresses from static analysis
     print("Start static analysis...")
     out_filename = f"{str(dest_path)}.json"
-    arch = phy_elf.get_machine_data()["Architecture"]
-    processor = f"X86:LE:{virtspace.wordsize * 8}:default -cspec gcc" if arch == "X86" else f"AARCH64:LE:{virtspace.wordsize * 8}:v8A -cspec default" # Support only X86 and AARCH64 
-    ghidra_cmd = "/root/ghidra/support/analyzeHeadless" \
+    arch = phy_elf.get_machine_data()["Architecture"].lower()
+    processor = f"x86:LE:{virtspace.wordsize * 8}:default -cspec gcc" if ("x86" in arch or "386" in arch) else f"AARCH64:LE:{virtspace.wordsize * 8}:v8A -cspec default" # Support only X86 and AARCH64 
+    ghidra_cmd = f"{ghidra_path}/support/analyzeHeadless" \
                  f" /tmp/ ghidra_project_{random.randint(0, 1000000)}" \
                  f" -import {str(dest_path)}/extracted_kernel.elf" \
                  f" -processor {processor}" \
-                 f" -scriptPath /root/ghidra -postScript export_xrefs.py {out_filename}"
+                 f" -scriptPath {os.path.dirname(__file__)}/ghidra -postScript export_xrefs.py {out_filename}"
+
+    functions = set()
     try:
         ret = subprocess_check_output_strip(ghidra_cmd)
         with open(out_filename, "r") as output:
@@ -92,6 +100,8 @@ def main():
         print(e)
         xrefs_data = {}
     
+    if not functions:
+        print("WARNING: no functions identified...")
     # Save data structures
     print("Saving features...")
     dump(virtspace.v2o, str(dest_path) + "/extracted_v2o.lzma")
