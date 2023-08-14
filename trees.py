@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+#!/usr/bin/env -S python3 -u
+
 import itertools
 import logging
 from collections import defaultdict

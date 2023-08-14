@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 import argparse
 from collections import namedtuple
 from multiprocessing import Pool

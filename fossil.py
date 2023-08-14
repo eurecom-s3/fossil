@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -u
 
 from cmd2 import Cmd, with_category, with_argparser, style, Fg, Bg
 import argparse

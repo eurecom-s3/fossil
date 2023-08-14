@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -u
 
 from qmp import QEMUMonitorProtocol
 from signal import signal, SIGINT
