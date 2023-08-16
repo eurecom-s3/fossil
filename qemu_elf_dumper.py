@@ -19,6 +19,7 @@ little_endian = False
 dump_fifo = None
 path = None
 custom_values = []
+host_path = ""
 
 def ctrl_c_handler(sig, frame):
     global start_time_g
@@ -26,6 +27,7 @@ def ctrl_c_handler(sig, frame):
     global gdbmi
     global dump_fd
     global dump_fifo
+    global host_path
 
     uptime = (datetime.now() - start_time_g).total_seconds()
     print("\n\nSave registers and dump memory")
@@ -75,7 +77,7 @@ def ctrl_c_handler(sig, frame):
     dump_fd.write(elf_h + program_h + machine_note)
 
     def call_pmemsave(qemu_monito, r_start, r_size):
-        qemu_monitor.cmd("pmemsave", {"val": r_start, "size": r_size, "filename": path + "dump_fifo"})
+        qemu_monitor.cmd("pmemsave", {"val": r_start, "size": r_size, "filename": ((host_path + "/") if host_path else path) + "dump_fifo"})
 
     # Dump memory regions
     for region in mem_regions:
@@ -267,17 +269,23 @@ def main():
     global little_endian
     global path
     global custom_values
+    global host_path
 
     parser = argparse.ArgumentParser(description='You have to call QEMU with "-qmp tcp:HOST:PORT,server -s" options')
     parser.add_argument("qmp", help="QEMU QMP channel (host:port)", type=str)
     parser.add_argument("gdb", help="QEMU GDB channel (host:port)", type=str)
-    parser.add_argument("filename", help="Prefix for ELF dump and regs file.", type=str)
+    parser.add_argument("path", help="Path for the output", type=str)
     parser.add_argument("-c", help="Add custom values KEY_DICT:KEY:VALUE", action='append', nargs='+', default=[], metavar="KEY_DICT:KEY:VALUE")
-    parser.add_argument("-r", help="Enable patch to support GDB RISC-V stub", type=str, metavar="GDB_PATH")
+    parser.add_argument("-d", help="Docker mode. Host path for /data volume", type=str, default="", metavar="HOST_DATA_PATH")
     args = parser.parse_args()
 
+    if args.d:
+        path = "/data/"
+    else:
+        path = args.path + "/"
+
+    host_path = args.d
     custom_values = args.c
-    gdb_patch = args.r
     try:
         qemu_qmp = args.qmp.split(":")
         qemu_qmp[1] = int(qemu_qmp[1])
@@ -288,16 +296,15 @@ def main():
 
     # Create dump file
     try:
-        dump_fd = open(args.filename, "wb")
+        dump_fd = open(path + "dump.elf", "wb")
     except Exception as e:
         print(e)
         print("Unable to open output file!")
         exit(1)
-    path = os.path.dirname(os.path.abspath(args.filename)) + "/"
 
     # Create dump fifo
     try:
-        os.mkfifo(path + "dump_fifo")
+        os.mkfifo(path + "dump_fifo", mode=0o777)
     except OSError as oe:
         if oe.errno != errno.EEXIST:
             print(oe)
@@ -316,16 +323,7 @@ def main():
     # Try to open GDB channel
     try:
         gdb_cmd = DEFAULT_GDB_LAUNCH_COMMAND.copy()
-        if gdb_patch:
-            gdb_cmd[0] = gdb_patch
-            gdb_path = os.path.dirname(os.path.abspath(args.filename))
-            gdb_cmd.append(f"--data-directory={gdb_path}/data-directory")
-
         gdbmi = GdbController(gdb_cmd)
-
-        if gdb_patch:
-            gdbmi.write("set architecture riscv")
-
         gdbmi.write(f'target remote {args.gdb}')
         start_time_g = datetime.now()
         little_endian = True if "little" in gdbmi.write("show endian")[1]["payload"] else False

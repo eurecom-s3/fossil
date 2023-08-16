@@ -69,7 +69,7 @@ def main():
 
     # Collect addresses from static analysis
     print("Start static analysis...")
-    out_filename = f"{str(dest_path)}.json"
+    out_filename = f"{str(dest_path)}/ghidra.json"
     arch = phy_elf.get_machine_data()["Architecture"].lower()
     processor = f"x86:LE:{virtspace.wordsize * 8}:default -cspec gcc" if ("x86" in arch or "386" in arch) else f"AARCH64:LE:{virtspace.wordsize * 8}:v8A -cspec default" # Support only X86 and AARCH64 
     ghidra_cmd = f"{ghidra_path}/support/analyzeHeadless" \
