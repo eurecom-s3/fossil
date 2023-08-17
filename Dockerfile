@@ -47,7 +47,8 @@ RUN cd ghidra && \
     wget https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_10.3.2_build/ghidra_10.3.2_PUBLIC_20230711.zip && \
     unzip ghidra_10.3.2_PUBLIC_20230711.zip && \
     rm ghidra_10.3.2_PUBLIC_20230711.zip && \
-    mv ghidra_10.3.2_PUBLIC ghidra
+    mv ghidra_10.3.2_PUBLIC ghidra && \
+    sed -i s/MAXMEM=2G/MAXMEM=8G/g ghidra/support/analyzeHeadless
 
 # Set environment variables
 ENV GHIDRA_PATH="/fossil/ghidra/ghidra"
