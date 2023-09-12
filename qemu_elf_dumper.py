@@ -261,16 +261,7 @@ def extract_registers_values(gdb_message):
 
     return regs
 
-def main():
-    global start_time_g
-    global qemu_monitor
-    global gdbmi
-    global dump_fd
-    global little_endian
-    global path
-    global custom_values
-    global host_path
-
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='You have to call QEMU with "-qmp tcp:HOST:PORT,server -s" options')
     parser.add_argument("qmp", help="QEMU QMP channel (host:port)", type=str)
     parser.add_argument("gdb", help="QEMU GDB channel (host:port)", type=str)
@@ -338,6 +329,3 @@ def main():
     print("Press CTRL-C to dump the memory, save the registers, and shutdown the machine")
     while(True):
         pass
-
-if __name__ == "__main__":
-    main()
