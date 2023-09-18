@@ -240,15 +240,15 @@ def create_machine_note(is_little_endian:bool, note_name:str, note_description:A
         name_field + \
         description_field
 
-def create_program_header(elf_header:bytearray, memory_regions:list[dict], is_little_endian:bool, note_length:int) -> bytearray:
+def create_program_header(elf_header:bytearray, memory_regions:list[dict], is_little_endian:bool, note_length:int) -> tuple[bytearray, bytearray]:
     """ 
-    Returns a bytearray representing machine data
-    The data is as follows:
+    Returns two bytearrays representing elf header and machine data
+    The machine data is as follows:
     - Note
         - Type
         - Offset
         - Size
-    - Memory regions
+    - Memory regions (foreach)
         - Type
         - Flags
         - Offset
@@ -294,7 +294,12 @@ def create_program_header(elf_header:bytearray, memory_regions:list[dict], is_li
 
         program_header += region_entry
 
-    return program_header
+    # Complete ELF header
+    elf_header[0x20:0x28] = 0x40.to_bytes(8, endianness)                       
+    elf_header[0x36:0x38] = header_field_size.to_bytes(2, endianness)
+    elf_header[0x38:0x3A] = (len(memory_regions) + 1).to_bytes(2, endianness)
+
+    return elf_header, program_header
 
 def dump_header(qmp_monitor:QEMUMonitorProtocol, gdb_controller:GdbController, is_little_endian:bool, uptime:float, custom_values:list[str], dump_file_descriptor:BufferedWriter) -> list[dict]:
     """ 
@@ -350,7 +355,7 @@ def dump_header(qmp_monitor:QEMUMonitorProtocol, gdb_controller:GdbController, i
     elf_header = create_elf_header(architecture, is_little_endian)
 
     # Create program header
-    program_header = create_program_header(elf_header, memory_regions, is_little_endian, len(machine_note))
+    elf_header, program_header = create_program_header(elf_header, memory_regions, is_little_endian, len(machine_note))
 
     # Write headers
     dump_file_descriptor.write(elf_header + program_header + machine_note)
@@ -402,7 +407,8 @@ if __name__ == "__main__":
     wait_for_interrupt()
 
     # Get and process data
-    uptime = (datetime.now() - arguments['start_time_gdb']).total_seconds()
+    #uptime = (datetime.now() - arguments['start_time_gdb']).total_seconds()
+    uptime = 100.0
     print('Save registers and dump memory')
     arguments['qemu_qmp_monitor'].cmd('stop', {})
     
