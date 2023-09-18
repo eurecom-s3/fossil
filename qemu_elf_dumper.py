@@ -242,7 +242,7 @@ def create_machine_note(is_little_endian:bool, note_name:str, note_description:A
 
 def create_program_header(elf_header:bytearray, memory_regions:list[dict], is_little_endian:bool, note_length:int) -> tuple[bytearray, bytearray]:
     """ 
-    Returns two bytearrays representing elf header and machine data
+    Returns two bytearrays representing the completed elf header and machine data
     The machine data is as follows:
     - Note
         - Type
