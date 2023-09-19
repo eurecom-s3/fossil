@@ -7,8 +7,8 @@ import json
 import logging
 import os
 import subprocess
-from addrspaces import RISCVSV32, RISCVSV39, AArch64Long, ARMShort, ELFDump, IntelAMD64, IntelIA32, IntelPAE
-from addrspaces import get_virtspace
+from addrspaces import RISCVSV32, RISCVSV39, AArch64Long, ARMShort, IntelAMD64, IntelIA32, IntelPAE
+from addrspaces import get_virtspace, ELFDump
 from compress_pickle import dump
 from pathlib import Path
 from uuid import uuid4
