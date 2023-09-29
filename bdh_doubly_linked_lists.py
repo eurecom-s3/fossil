@@ -1,220 +1,348 @@
 #!/usr/bin/env -S python3 -u
-
+import compress_pickle
 import itertools
 import logging
-from collections import defaultdict
-from typing import Dict, Tuple
-
-import compress_pickle
 import numpy as np
+import script_utils
+from bdhash import BDHStack # type:ignore
+from bdhash import DTYPE as BDHASH_DTYPE
+from bdhash import fwd_hash
+from chains import ChainGraph, PointerSet
+from chains import POINTER_DTYPE, POINTER_SIZE, UNSIGNED_POINTER_DTYPE
+from dask.bag import Bag
 from more_itertools import pairwise
 
-import script_utils
-from bdhash import BDHStack, DTYPE as BDHASH_DTYPE, fwd_hash
-from chains import ChainGraph, POINTER_DTYPE, POINTER_SIZE, UNSIGNED_POINTER_DTYPE
-
-OFFSET_DTYPE = np.int32
-CHAIN_SIZE_DTYPE = np.uint64
-
 hashes_dtype = np.dtype([('hash', BDHASH_DTYPE), ('direction', np.bool_), ('head', POINTER_DTYPE),
-                         ('tail', POINTER_DTYPE), ('offset', OFFSET_DTYPE), ('size', CHAIN_SIZE_DTYPE)])
+                         ('tail', POINTER_DTYPE), ('offset', np.int32), ('size', np.uint64)])
 
+def parse_arguments() -> dict:
 
-def arg_uniq(a):
-    """The indices of each first unique element of `a`, assuming `a` is sorted."""
-    if a.size == 0:
-        return np.array([])
-    mask = np.empty(a.shape, dtype=np.bool_)
-    mask[0] = True
-    mask[1:] = a[1:] != a[:-1]
-    return np.flatnonzero(mask)
+    # Get common parser and add argument
+    parser = script_utils.get_parser()
+    parser.add_argument('--min-size', type=int, default=3, help="minimum length of chains")
+    return script_utils.parse_arguments(parser)
 
+def bidirectional_hashes(graph: ChainGraph, min_size:int) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Computes bidirectional hashes.
+    Returns 2 multidimensional arrays: linear and cyclic
+    """
 
-# noinspection PyTupleAssignmentBalance
-def bd_hashes(g: ChainGraph, min_size) -> Tuple[np.ndarray, np.ndarray]:
-    """Compute bidirectional hashes."""
-    component2vertices = defaultdict(list)
-    for i, c in enumerate(g.vp.component.a):
-        component2vertices[c].append(i)
-
-    offset = g.offset
-    line_res, cycle_res = [], []
-
-    for cycle, rtrees in g.component_breakdowns(min_size):
-        diffs_min_size = min_size - 1  # np.diff(a).size == a.size - 1
+    # Initialize data
+    offset = graph.offset
+    diffs_min_size = min_size - 1
+    linear_results, cyclic_results = [], []
+    
+    # Compute search
+    for cycle, rtrees in graph.component_breakdowns(min_size):
+        
+        # Cyclic search
         if cycle is not None:
-            h0, h1 = fwd_hash(np.diff(cycle)), fwd_hash(np.diff(np.roll(cycle, -1)[::-1]))
-            assert h0 != h1  # no palindromic sequences or hash conflicts
-            h, direction, head, tail = (h0, 0, cycle[0], cycle[-1]) if h0 < h1 else (h1, 1, cycle[1], cycle[0])
-            cycle_res.append((h, direction, head, tail, offset, cycle.size))
+            first_hash = fwd_hash(np.diff(cycle))
+            second_hash = fwd_hash(np.diff(np.roll(cycle, -1)[::-1]))
+            
+            # no palindromic sequences or hash conflicts
+            assert first_hash != second_hash
+
+            hashed, direction, head, tail = (second_hash, 1, cycle[1], cycle[0])
+            if first_hash < second_hash:
+                hashed, direction, head, tail = (first_hash, 0, cycle[0], cycle[-1])
+            
+            cyclic_results.append((
+                hashed, 
+                direction, 
+                head, 
+                tail, 
+                offset, 
+                cycle.size
+            ))
+
+        # Linear search
         for sink, parent_mapping in rtrees:
             diffs = BDHStack()
-            stack = [(0, sink, parent) for parent in parent_mapping[sink]]
+
+            stack:list[tuple[int, np.int64, np.int64]]
+            stack = [
+                (0, sink, parent) 
+                for parent in parent_mapping[sink]
+            ]
+
             while stack:
                 depth, child, parent = stack.pop()
                 while len(diffs) != depth:
                     assert len(diffs) > depth
                     diffs.pop()
+                
                 diffs.append(child - parent)
                 depth += 1
                 assert depth == len(diffs)
+
                 if depth >= diffs_min_size:
-                    h0, h1 = diffs.hash()
-                    assert h0 != h1, list(diffs)  # fails for palindromic sequences or hash conflicts
-                    # we should have no palindromic sequences
-                    h, direction = (h0, 0) if h0 < h1 else (h1, 1)
-                    line_res.append((h, direction, parent, sink, offset, depth + 1))
-                stack.extend((depth, parent, grandpa) for grandpa in parent_mapping.get(parent, []))
+                    first_hash, second_hash = diffs.hash()
 
-    def process_result(res):
-        res = np.array(res, hashes_dtype)
-        res.sort(order=('size', 'hash', 'direction'))  # this will make further sorting quicker after
-        return res
+                    # fails for palindromic sequences or hash conflicts
+                    assert first_hash != second_hash, list(diffs)  
 
-    return process_result(line_res), process_result(cycle_res)
+                    hashed, direction = (second_hash, 1)
+                    if first_hash < second_hash:
+                        hashed, direction = (first_hash, 0)
+                    
+                    linear_results.append((
+                        hashed, 
+                        direction, 
+                        parent, 
+                        sink, 
+                        offset, 
+                        depth + 1
+                    ))
+                stack.extend(
+                    (depth, parent, grandpa) 
+                    for grandpa in parent_mapping.get(parent, [])
+                )
 
+    # Process results 
+    linear = np.array(linear_results, hashes_dtype)
+    cyclic = np.array(cyclic_results, hashes_dtype)
+    linear.sort(order=('size', 'hash', 'direction'))
+    cyclic.sort(order=('size', 'hash', 'direction'))
 
-def compute_chain(pointers, head, offset, size):
+    return linear, cyclic
+
+def get_unique_indices(array:np.ndarray) -> np.ndarray:
+    """
+    Returns the indices of each first unique element of the sorted array
+    """
+
+    if array.size == 0:
+        return np.array([])
+    mask = np.empty(array.shape, dtype=np.bool_)
+    mask[0] = True
+    mask[1:] = array[1:] != array[:-1]
+    return np.flatnonzero(mask)
+
+def get_parameters_boundaries(rows:np.ndarray, assigned:dict) -> list[tuple[tuple[POINTER_DTYPE,POINTER_DTYPE,POINTER_DTYPE],tuple[POINTER_DTYPE,POINTER_DTYPE]]]:
+            """
+            Calculates paramaters for building the chain
+            Results are sorted by lowest right boundary
+            The reference object is the head if direction == 0, tail otherwise.
+
+            Returns a list with the following structure:
+            - (
+                (head:int, offset:int, size:int),
+                (left_boundary:int, right_boundary:int)
+            )
+            """
+
+            result = []
+            for _, direction, head, tail, offset, size in rows:
+                
+                # Skip rows containing already assigned heads or tails
+                if head in assigned:
+                    continue
+                if tail in assigned:  # skip rows containing already assigned heads or tails
+                    continue
+
+                # Get starting pointer
+                pointer = head
+                if direction:
+                    pointer = tail
+
+                # By subtracting the offset we get what was pointed by the previous element
+                pointed = pointer - offset
+
+                # Get the boundaries
+                boundaries = (
+                    pointer,
+                    max(pointer + POINTER_SIZE + 1, pointed + 1)
+                )
+                if offset > 0:
+                    boundaries = (
+                        pointed,
+                        pointer + POINTER_SIZE
+                    )
+
+                result.append((
+                    (head, offset, size), 
+                    boundaries
+                ))
+
+            # Sort the results from the lowest right boundary
+            result.sort(key=lambda pair: pair[1][1])
+            return result
+
+def compute_chain(pointers: dict[POINTER_DTYPE,POINTER_DTYPE], head:POINTER_DTYPE, offset:POINTER_DTYPE, size:POINTER_DTYPE):
     """Compute a chain using the pointers dictionary."""
 
-    res = [head]
-    while len(res) < size:
+    result = [head]
+    while len(result) < size:
         head = pointers[head] + offset
-        res.append(head)
-    return np.array(res, dtype=UNSIGNED_POINTER_DTYPE).astype(POINTER_DTYPE)
+        result.append(head)
+    return np.array(result, dtype=UNSIGNED_POINTER_DTYPE).astype(POINTER_DTYPE)
 
+def compute_matches(data: np.ndarray, pointers: dict[POINTER_DTYPE, POINTER_DTYPE], label: str) -> tuple[list[tuple[np.ndarray,POINTER_DTYPE,np.ndarray,POINTER_DTYPE]], dict[POINTER_DTYPE,int]]:
+    """
+    Find matches from the computed hashes.
+    Returns a list (matches) and a dict (assigned)
+    """
 
-def compute_matches(data: np.ndarray, pointers: Dict[POINTER_DTYPE, POINTER_DTYPE], label: str):
-    """Find matches from the hashes computed by `bd_hashes`."""
-
+    # First check
     if not len(data):
         return [], {}
 
-    # this sorting allows grouping by hash then direction; we'll start from the bottom to prioritize longer lists
-    # mergesort specifies timsort, which is faster for almost-sorted data
+    # Data sorting
+    # ------------
+    #   This sorting allows grouping by hash then direction
+    #   We'll start from the bottom to prioritize longer lists
+    #   Mergesort specifies Timsort, which is faster for almost-sorted data
     data.sort(order=('size', 'hash', 'direction'), kind='mergesort')
 
+    # Data filtering
+    # --------------
     # Take only duplicate values. See how np.unique is implemented to get how this works.
     non_unique_mask = np.concatenate([~np.diff(data['hash']).astype(bool), [False]])
     non_unique_mask |= np.roll(non_unique_mask, 1)
     data = data[non_unique_mask]
 
-    logging.info(f"{label}: {data.size:,} non-unique hashes")
+    logging.info(f'{label}: {data.size:,} non-unique hashes')
     assigned = {}
     matches = []
 
-    # we start from the bottom to give priority to longest chains
-    for a, b in list(pairwise(itertools.chain(arg_uniq(data['hash']), [None])))[::-1]:
+    # Data transformation for elaboration
+    unique_hash_indices = get_unique_indices(data['hash'])
+    chained_unique_indices = itertools.chain(unique_hash_indices, [None])
+    paired_unique_indices = list(pairwise(chained_unique_indices))
 
-        group = data[a:b]  # this group contains all elements having the same (size, hash) pair
+
+    # We start from the bottom to give priority to longest chains
+    for first_index, second_index in paired_unique_indices[::-1]:
+
+        # This group contains all elements having the same (size, hash) pair
+        group = data[first_index:second_index]
         assert len(set(group['hash'])) == 1
         assert len(set(group['size'])) == 1
 
-        m = np.searchsorted(group['direction'], 1)  # index discriminating between the two directions
-        if not 0 < m < group.size:  # hashes in just a single direction: no matches possible
+        # Index discriminating between the two directions
+        changing_direction_index = np.searchsorted(group['direction'], 1)
+
+        # Hashes in just a single direction: no possible matches
+        if not (0 < changing_direction_index < group.size):
             continue
 
-        def params_boundary(rows):
-            """Params for compute_chain and interval within which the reference object relating to this chain must be.
-
-            Results are sorted by left boundary; the reference object is the head if direction == 0, 1 otherwise.
-            """
-
-            res = []
-            for _, direction, head, tail, offset, size in rows:
-                if head in assigned or tail in assigned:  # skip rows containing already assigned heads or tails
-                    continue
-                ptr = tail if direction else head
-                pointed = ptr - offset  # by subtracting offset we return to what was pointed by the previous element
-                bounds = ((pointed, ptr + POINTER_SIZE) if offset > 0
-                          else (ptr, max(ptr + POINTER_SIZE + 1, pointed + 1)))
-                res.append(((head, offset, size), bounds))
-            res.sort(key=lambda pair: pair[1][1])  # sort by right bound
-            return res
-
-        fwd = params_boundary(group[:m])
-        if len(fwd) == 0:
-            continue
-        # we use a dictionary for efficient deletion and because it preserves insertion order (by right boundary)
-        bwd = dict(params_boundary(group[m:]))
-        if len(bwd) == 0:
+        # Get forward referencing pointers
+        forward = get_parameters_boundaries(group[:changing_direction_index], assigned)
+        if len(forward) == 0:
             continue
 
-        chain = compute_chain(pointers, *fwd[0][0])
+        # Get backward referencing pointers
+        # We use a dictionary because it preserves insertion order (by right boundary)
+        backward = dict(get_parameters_boundaries(group[changing_direction_index:], assigned))
+        if len(backward) == 0:
+            continue
+
+        # Get forward pointing chain
+        chain = compute_chain(pointers, *forward[0][0])
         diff = np.diff(chain)
         min_diff = np.min(np.diff(np.sort(chain)))
         assert min_diff > 0
 
-        for (fwd_head, fwd_offset, fwd_size), (fwd_l, fwd_r) in fwd:
-            # the object must be at least in the [min(bwd_l, fwd_l), max(bwd_r, fwd_r)) interval
-            # this interval cannot be larger than min_diff
-            # these thresholds are respectively minimum and maximum values for bwd_l and bwd_r
-            min_threshold, max_threshold = fwd_r - min_diff, fwd_l + min_diff
+        for (forward_head, forward_offset, forward_size), (forward_left, forward_right) in forward:
+            # The object must be in the interval:
+            #   min(backward_left, forward_left) <= object < max(backward_right, forward_right)
+            # having the interval <= min_diff
+            
+            # These thresholds are respectively minimum and maximum values for backward_left and backward_right
+            min_threshold = forward_right - min_diff
+            max_threshold = forward_left + min_diff
+
             candidates, to_delete = [], []
-            for bwd_params, (bwd_l, bwd_r) in bwd.items():  # bwd_[l,r] are left and right bounds respectively
-                if bwd_l < min_threshold:
-                    # since min_threshold depends on fwd_r by which fwd is sorted, bwd_params won't match from now on
-                    to_delete.append(bwd_params)  # we can't delete from bwd right now, since we're iterating on it
+            for backward_parameters, (backward_left, backward_right) in backward.items():
+                
+                # Since min_threshold depends on forward_right, backward_parameters wont' match any more
+                if backward_left < min_threshold:
+                    to_delete.append(backward_parameters)  # we can't delete from bwd right now, since we're iterating on it
                     continue
-                if bwd_r > max_threshold:  # because of sorting, we won't find any more matches with the forward chain
+                
+                # Because of the sorting, we won't find any more matches with the forward chain
+                if backward_right > max_threshold:
                     break
-                candidates.append(bwd_params)
-            for bwd_params in to_delete:
-                del bwd[bwd_params]
+
+                candidates.append(backward_parameters)
+
+            for backward_parameters in to_delete:
+                del backward[backward_parameters]
+
             if not candidates:
                 continue
-            fwd_chain = compute_chain(pointers, fwd_head, fwd_offset, fwd_size)
-            assert np.array_equal(np.diff(fwd_chain), diff)  # check for hash collision
-            if any(p in assigned for p in fwd_chain):
+
+            forward_chain = compute_chain(pointers, forward_head, forward_offset, forward_size)
+
+            # Hash collision check
+            assert np.array_equal(np.diff(forward_chain), diff)
+
+            # Discard already assigned pointers
+            if any(pointer in assigned for pointer in forward_chain):
                 continue
 
-            # try to match candidates -- closest ones first
-            fwd_head = fwd_chain[0]
-            for bwd_params in sorted(candidates, key=lambda params: abs(fwd_head - params[0])):
-                bwd_head, bwd_offset, bwd_size = bwd_params
-                assert bwd_size == fwd_size
-                bwd_chain = compute_chain(pointers, bwd_head, bwd_offset, bwd_size)
-                assert np.array_equal(np.diff(bwd_chain[::-1]), diff)  # check for hash collision
-                if any(p in assigned for p in bwd_chain):  # some pointer in this chain have already been assigned
-                    del bwd[bwd_params]
+            # Try to match candidates. Closest ones first
+            forward_head = forward_chain[0]
+            sorted_candidates = sorted(candidates, key=lambda params: abs(forward_head - params[0]))
+            for backward_parameters in sorted_candidates:
+                backward_head, backward_offset, backward_size = backward_parameters
+                assert backward_size == forward_size
+
+                backward_chain = compute_chain(pointers, backward_head, backward_offset, backward_size)
+
+                # Hash collision check
+                assert np.array_equal(np.diff(backward_chain[::-1]), diff)
+
+                # Discard already assigned
+                if any(pointer in assigned for pointer in backward_chain):
+                    del backward[backward_parameters]
                     continue
-                assert len(set(fwd_chain) & set(bwd_chain)) == 0  # no cases of pointers in both directions
-                assert fwd_chain[0] - bwd_chain[-1] <= min_diff
-                assert (np.diff(fwd_chain - bwd_chain[::-1]) == 0).all()
-                # all controls are ok! We have a match
-                match_no = len(matches)
-                matches.append((fwd_chain, fwd_offset, bwd_chain, bwd_offset))
-                for chain in [bwd_chain, fwd_chain]:
-                    for p in chain:
-                        assigned[p] = match_no
-                del bwd[bwd_params]
+
+                # Discard both direction pointers
+                assert len(set(forward_chain) & set(backward_chain)) == 0
+
+                # Interval size respected
+                assert forward_chain[0] - backward_chain[-1] <= min_diff
+
+                # Check correspondence between pointers (from different directions)
+                assert (np.diff(forward_chain - backward_chain[::-1]) == 0).all()
+                
+                # Match found! Let's go!
+                matches_no = len(matches)
+                matches.append((forward_chain, forward_offset, backward_chain, backward_offset))
+
+                # Assign pointers
+                for chain in [backward_chain, forward_chain]:
+                    for pointer in chain:
+                        assigned[pointer] = matches_no
+            
+                # Remove backward parameters
+                del backward[backward_parameters]
                 break
     return matches, assigned
 
 
-def search(graphs, min_size, pointer_set):
-    pointers = dict(zip(pointer_set.src, pointer_set.dst))
-    linear, cycles = [np.concatenate(arrays) for arrays in zip(*graphs.map(bd_hashes, min_size).compute())]
-    logging.info(f"hashes: {linear.size:,} (linear), {cycles.size:,} (cycles)")
-    return compute_matches(linear, pointers, "linear"), compute_matches(cycles, pointers, "cycles")
-
-
-def main():
-    parser = script_utils.setup_arg_parser()
-    parser.add_argument('--min-size', type=int, default=3, help="minimum length of chains")
-    args = parser.parse_args()
-    script_utils.setup_logging(args)
-    pointer_set = script_utils.compute_pointer_set(args)
-    graphs = script_utils.compute_chain_graphs(args, pointer_set)
-    res = search(graphs, args.min_size, pointer_set)
-    for name, (match_list, ptr2match) in zip(["linear", "cycles"], res):
-        n_matches = len(match_list)
-        try:
-            logging.info(f"{name}: {n_matches:,} lists (avg length {len(ptr2match) / n_matches:,.2f})")
-        except ZeroDivisionError:
-            logging.info("Something was wrong, 0 matches... :(")
-    compress_pickle.dump(res, args.output)
+def search_linear_and_cyclic_matches(graphs:Bag, min_size:int, pointer_set:PointerSet):
+    pointers = pointer_set.to_dict()
+    bd_hashes:zip[tuple[np.ndarray,np.ndarray]] = zip(*graphs.map(bidirectional_hashes, min_size).compute())
+    linear, cyclic = [
+        np.concatenate(arrays) 
+        for arrays in bd_hashes
+    ]
+    logging.info(f'hashes: {linear.size:,} (linear), {cyclic.size:,} (cyclic)')
+    return compute_matches(linear, pointers, 'linear'), \
+            compute_matches(cyclic, pointers, 'cyclic')
 
 
 if __name__ == '__main__':
-    main()
+    arguments = parse_arguments()
+    results = search_linear_and_cyclic_matches(arguments['graphs'], arguments['min_size'], arguments['pointers'])
+    for name, (match_list, pointer_to_match) in zip(['linear', 'cycles'], results):
+        matches_no = len(match_list)
+        try:
+            logging.info(f'{name}: {matches_no:,} lists (avg length {len(pointer_to_match) / matches_no:,.2f})')
+        except ZeroDivisionError:
+            logging.info('Something was wrong, 0 matches... :(')
+    compress_pickle.dump(results, arguments['output'])
