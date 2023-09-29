@@ -21,7 +21,7 @@ POINTER_SIZE = 8  # bytes: 8 => 64 bit, 4 => 32 bit
 #    integers return floats)
 # we map an unsigned pointer to the integer interpretation of the same bits
 POINTER_DTYPE_S = 'int64'
-POINTER_DTYPE = getattr(np, POINTER_DTYPE_S)  # np.int64 (with POINTER_DTYPE_S == 'int64')
+POINTER_DTYPE = np.int64
 UNSIGNED_POINTER_DTYPE = getattr(np, f'u{POINTER_DTYPE_S}')  # np.uint64
 GT_POINTER_DTYPE = f'{POINTER_DTYPE_S}_t'  # 'int64_t' (graph-tool wants this format)
 
