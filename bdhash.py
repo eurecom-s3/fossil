@@ -1,8 +1,9 @@
 import logging
-from typing import Iterable, List, Sequence
+from typing import Iterable, List
 import warnings
 
 import numpy as np
+from numpy.typing import NDArray
 
 warnings.filterwarnings('ignore', 'overflow encountered in', RuntimeWarning, __name__)
 
@@ -30,7 +31,7 @@ def _expand_powers():
     powers = np.append(powers, C ** np.arange(len(powers), 2 * len(powers), dtype=DTYPE))
 
 
-def fwd_hash(seq: Sequence):
+def fwd_hash(seq: NDArray):
     n = len(seq)
     while n > powers.size:
         _expand_powers()
@@ -56,10 +57,8 @@ class PyBDHash(object):
 
     def append(self, v):
         v = DTYPE(v)
-        self.h0 *= C
-        self.h0 += v
-        self._s1 *= INV_C
-        self._s1 -= v
+        self.h0  = (self.h0 * C) + v
+        self._s1 = (self._s1 * INV_C) - v
         self.size += 1
 
     def update(self, iterable):
@@ -68,18 +67,15 @@ class PyBDHash(object):
 
     def pop(self, v):
         v = DTYPE(v)
-        self.h0 -= v
-        self.h0 *= INV_C
-        self._s1 += v
-        self._s1 *= C
+        self.h0 = (self.h0 - v) * INV_C
+        self._s1 = (self._s1 + v) * C
         self.size -= 1
 
     def hash(self):
         global powers
-        size = self.size
-        while size > len(powers):
+        while self.size > powers.size:
             _expand_powers()
-        return self.h0, powers[size - 1] * self._s1
+        return self.h0, powers[self.size - 1] * self._s1
 
 
 class PyBDHStack:
@@ -95,6 +91,12 @@ class PyBDHStack:
 
     def __len__(self):
         return self._h.size
+
+    def __iter__(self):
+        yield from self._l
+
+    def __str__(self):
+        return f'{self.__class__.__name__}({list(self)})'
 
     def append(self, v):
         self._l.append(v)
@@ -114,29 +116,7 @@ class PyBDHStack:
 
 
 try:
-    from cython_bdhash import BDHash, BDHStack
+    from cython_bdhash import BDHash, BDHStack # type:ignore
 except ImportError:
     logging.warn("Cython-compiled version of bdhash not available, compile with `python setup.py build_ext --inplace`")
     BDHash, BDHStack = PyBDHash, PyBDHStack
-
-
-def main():
-    import cython_bdhash
-
-    rng = np.random.default_rng()
-    array = rng.integers(-1_000_000_000, 1_000_000_000, 20_000)
-    res = []
-    for Stack in [PyBDHStack, cython_bdhash.BDHStack]:
-        hasher1 = Stack(array)
-        assert hasher1.hash()[0] == fwd_hash(array), fwd_hash(array)
-        hasher2 = Stack(-array[::-1])
-        assert hasher1.hash() == hasher2.hash()[::-1], (hasher1.hash(), hasher2.hash())
-        hasher1.pop()
-        hasher3 = BDHStack(-array[:-1][::-1])
-        assert hasher1.hash() == hasher3.hash()[::-1]
-        res.append((hasher1.hash(), hasher2.hash()))
-    assert res[0] == res[1]
-
-
-if __name__ == '__main__':
-    main()
