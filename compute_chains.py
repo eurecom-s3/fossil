@@ -51,10 +51,7 @@ def print_graph_stats(stats):
         print(f"avg size: {avg_size:>5,.2f}, max: {max_size:,}")
     print(fmt_percentage(others / n_chains), "others")
 
-
-def main():
-    global args, pointer_set
-
+if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('ptrs', help='Pickle file containing pointers; can be compressed')
     parser.add_argument('dest', help='Gzipped shelve file in which to store the output')
@@ -81,7 +78,3 @@ def main():
             for offset in p.imap_unordered(compute_chain_graph, offsets):
                 print(offset, end=' ')
                 sys.stdout.flush()
-
-
-if __name__ == '__main__':
-    main()
