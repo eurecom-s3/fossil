@@ -23,6 +23,13 @@ def format_percentage(ratio:float, fixed_width:bool=False) -> str:
 # +------------------------------+
 # | Arguments parsing utilities  |
 # +------------------------------+
+def _get_output_help(output_type:str) -> str:
+    if output_type == 'directory':
+        return 'destination path for output file(s)'
+    if output_type == 'pickle':
+        return 'pickled file in which to store the result; will be compressed according to extension (e.g. lzma, lz4, ...)'
+    return ''
+
 def _get_arguments_dests(parser:argparse.ArgumentParser) -> list[str]:
     # Blacklist of unwanted arguments
     blacklist = ['help']
@@ -74,7 +81,7 @@ def _compute_chain_graphs(min_offset:int, max_offset:int, offset_step:int, point
     return db.from_sequence(offsets, partition_size=1) \
         .map(lambda offset: ChainGraph(pointers, offset))
 
-def get_parser() -> argparse.ArgumentParser:
+def get_parser(output_type:str='directory') -> argparse.ArgumentParser:
     """ 
     Creates an ArgumentParser object and returns it.
     The arguments are as follows:
@@ -83,7 +90,7 @@ def get_parser() -> argparse.ArgumentParser:
     | Positional arguments  |
     +-----------------------+
     [+] 'pointers'      : pickle file containing pointers; can be a compressed file
-    [+] 'output'        : pickle file in which to store the result; will be compressed according to extension
+    [+] 'output'        : file or directory for output
     
     +-----------------------+
     | Optional arguments    |
@@ -96,7 +103,7 @@ def get_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser()
     parser.add_argument('pointers',         help="pickle file containing pointers; can be a compressed file")
-    parser.add_argument('output',           help='pickled file in which to store the result; will be compressed according to extension')
+    parser.add_argument('output',           help=_get_output_help(output_type))
     parser.add_argument('--min-offset',     type=int, default=-64,  help="minimum offset to take into account, in bytes (default -64)")
     parser.add_argument('--max-offset',     type=int, default=64,   help="maximum offset to take into account, in bytes (default 64)")
     parser.add_argument('--offset-step',    type=int, default=8,    help="distance between consecutive offsets, in bytes (default 8)")
