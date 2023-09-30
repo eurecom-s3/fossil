@@ -12,6 +12,15 @@ from dask.diagnostics import ProgressBar
 DEFAULT_TASKS_PER_PROCESSOR = 4
 
 # +------------------------------+
+# | Common usage "public" funcs  |
+# +------------------------------+
+def format_percentage(ratio:float, fixed_width:bool=False) -> str:
+    format_string = '{:.2f}%'
+    if fixed_width:
+        format_string = '{:>5.2f}%'
+    return format_string.format(100 * ratio)
+
+# +------------------------------+
 # | Arguments parsing utilities  |
 # +------------------------------+
 def _get_arguments_dests(parser:argparse.ArgumentParser) -> list[str]:
@@ -52,17 +61,11 @@ def _setup_logging(is_silent:bool) -> None:
     if not is_silent:
         ProgressBar().register()
 
-def _format_percentage(ratio:float, fixed_width:bool=False) -> str:
-    format_string = '{:.2f}%'
-    if fixed_width:
-        format_string = '{:>5.2f}%'
-    return format_string.format(100 * ratio)
-
 def _compute_pointer_set(pointers_file:str) -> PointerSet:
     pointer_set = PointerSet(compress_pickle.load(pointers_file))
     aligned_src, aligned_dest = pointer_set.aligned_ratio()
-    sources_percent = _format_percentage(aligned_src)
-    destinations_percent = _format_percentage(aligned_dest)
+    sources_percent = format_percentage(aligned_src)
+    destinations_percent = format_percentage(aligned_dest)
     logging.info(f'{len(pointer_set):,} pointers [{sources_percent} sources and {destinations_percent} destinations aligned]')
     return pointer_set
 
