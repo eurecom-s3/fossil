@@ -442,7 +442,7 @@ class ChainGraph(gt.Graph):
         sinks = sum(chain.get_out_degrees(vertices) == 0)
         size = vertices.size
         assert in_degrees.max() <= vertices.size
-        assert confluences < sources
+        assert confluences < sources #TODO: check why this fails when using compute_chains.py --stats
         assert sinks <= 1
         return (sources, confluences, sinks), size
 
