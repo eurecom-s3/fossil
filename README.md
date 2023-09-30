@@ -7,7 +7,7 @@ This tool is composed by different modules:
 - `extract_features.py`: scans the VM core dump looking for strings, kernel pointers and performing static analysis using Ghidra
 - `bdh_doubly_linked_lists.py`: matches extracted pointers to find doubly linked lists
 - `compute_chains.py`: extracts linked lists
-- `tress.py`: extracts binary tress from the VM dump
+- `trees.py`: extracts binary tress from the VM dump
 - `extract_structs.py`: reorganizes structures extracted by the other scripts and extracts arrays
 - `fossil.py`: an interactive shell to explore the results
 ## Installation
