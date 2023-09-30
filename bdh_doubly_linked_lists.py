@@ -323,7 +323,6 @@ def compute_matches(data: np.ndarray, pointers: dict[POINTER_DTYPE, POINTER_DTYP
                 break
     return matches, assigned
 
-
 def search_linear_and_cyclic_matches(graphs:Bag, min_size:int, pointer_set:PointerSet):
     pointers = pointer_set.to_dict()
     bd_hashes:zip[tuple[np.ndarray,np.ndarray]] = zip(*graphs.map(bidirectional_hashes, min_size).compute())
@@ -334,7 +333,6 @@ def search_linear_and_cyclic_matches(graphs:Bag, min_size:int, pointer_set:Point
     logging.info(f'hashes: {linear.size:,} (linear), {cyclic.size:,} (cyclic)')
     return compute_matches(linear, pointers, 'linear'), \
             compute_matches(cyclic, pointers, 'cyclic')
-
 
 if __name__ == '__main__':
     arguments = parse_arguments()
