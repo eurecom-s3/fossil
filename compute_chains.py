@@ -1,80 +1,75 @@
-import argparse
-from collections import namedtuple
-from multiprocessing import Pool
+import compress_pickle
 import os
-import os.path
-import sys
+import script_utils
+from chains import ChainGraph, Topology
 
-from compress_pickle import load, dump
+def parse_arguments() -> dict:
+    # Get common parser and add argument
+    parser = script_utils.get_parser('directory')
+    parser.add_argument('--stats', default=False, action='store_true')
+    arguments = script_utils.parse_arguments(parser)
 
-from chains import PointerSet, ChainGraph
+    # Make sure output path exists
+    try:
+        os.mkdir(arguments['output'])
+    except FileExistsError:
+        pass
+    except FileNotFoundError:
+        print('Something went wrong while trying to check the output path! Exiting...')
+        exit(1)
+    return arguments
 
-# global variables we set in main()
-args: argparse.Namespace
-pointer_set: PointerSet
+def get_most_common(number:int, topology_counters:dict[Topology,int]) -> list[tuple[Topology,int]]:
+    sorted_topologies_by_counter = sorted(topology_counters.items(), key=lambda topology: topology[1], reverse=True)
+    result = []
+    for topology_tuple in sorted_topologies_by_counter:
+        if len(result) == number:
+            break
+        result.append(topology_tuple)
+    return result
 
+def print_graph_stats(graph:ChainGraph) -> None:
+    # Retrieve topology data and compute overall data
+    topology_counters, topology_sizes = graph.topology_counters()
+    chains_no = sum(topology_counters.values())
+    overall_average_size = sum(size * count for counter in topology_sizes.values() for size, count in counter.items()) / chains_no
+    overall_maximum_size = max(map(max, topology_sizes.values()))
+    
+    # Print overall data
+    print(f'\nOffset {graph.offset}') 
+    print(f'{graph.num_vertices():,} vertices, {graph.num_edges():,} edges, {chains_no:,} components')
+    print(f'Overall average size: {overall_average_size:,.2f}, overall maximum size: {overall_maximum_size:,}')
+    
+    # Print the 5 most commons data
+    others = chains_no
+    for topology, counter in get_most_common(5, topology_counters):
+        # Calculate for topology data
+        counter_size = topology_sizes[topology]
+        average_size = sum(size * count for size, count in counter_size.items()) / counter
+        maximum_size = max(counter_size)
+        others -= counter
 
-Stats = namedtuple('Stats', 'offset num_vertices num_edges topology_counters topology_sizes')
-
-
-def fmt_percentage(ratio, fixed_width=False):
-    fmt = '{:>5.2f}%' if fixed_width else '{:.2f}%'
-    return fmt.format(100 * ratio)
-
-
-def compute_chain_graph(offset):
-    g = ChainGraph(pointer_set, offset)
-    dump(g, os.path.join(args.dest, f'{offset}.lz4'))
-    if args.stats:
-        counter, sizes = g.topology_counters()
-        return Stats(offset, g.num_vertices(), g.num_edges(), counter, sizes)
-    else:
-        return offset
-
-
-def print_graph_stats(stats):
-    print()
-    print(f"Offset {stats.offset}")
-    n_chains = sum(stats.topology_counters.values())
-    print(f"{stats.num_vertices:,} vertices, {stats.num_edges:,} edges, {n_chains:,} components")
-    avg_size = sum(size * count for ctr in stats.topology_sizes.values() for size, count in ctr.items()) / n_chains
-    max_size = max(map(max, stats.topology_sizes.values()))
-    print(f"Overall avg size: {avg_size:,.2f}, max: {max_size:,}")
-    others = n_chains
-    for t, count in stats.topology_counters.most_common(5):
-        others -= count
-        print(f"{t[0]:,} sources, {t[1]:,} confluences, {t[2]:,} sinks:",
-              fmt_percentage(count / n_chains, True), end=' ')
-        size_ctr = stats.topology_sizes[t]
-        avg_size = sum(size * count for size, count in size_ctr.items()) / count
-        max_size = max(size_ctr)
-        print(f"avg size: {avg_size:>5,.2f}, max: {max_size:,}")
-    print(fmt_percentage(others / n_chains), "others")
+        # Print data
+        print(f'{topology[0]:,} sources,', end=' ')
+        print(f'{topology[1]:,} confluences,', end=' ')
+        print(f'{topology[2]:,} sinks: {script_utils.format_percentage(counter/chains_no, True)}', end=' ')
+        print(f'average size: {average_size:>5,.2f}, maximum size: {maximum_size:,}')
+    print(f'{script_utils.format_percentage(others/chains_no)} others')
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('ptrs', help='Pickle file containing pointers; can be compressed')
-    parser.add_argument('dest', help='Gzipped shelve file in which to store the output')
-    parser.add_argument('--stats', default=False, action='store_true')
-    parser.add_argument('--min_offset', type=int, default=-64)
-    parser.add_argument('--max_offset', type=int, default=64)
-    parser.add_argument('--offset_step', type=int, default=8)
-    args = parser.parse_args()
+    # Parse arguments
+    arguments = parse_arguments()
 
-    pointer_set = PointerSet(load(args.ptrs))
-    aligned_src, aligned_dst = pointer_set.aligned_ratio()
+    # Compute statistics
+    for graph in arguments['graphs']:
+        # For linting purposes
+        assert isinstance(graph,ChainGraph)
 
-    print(f"{len(pointer_set):,} pointers [{fmt_percentage(aligned_src)} sources "
-          f"and {fmt_percentage(aligned_dst)} destinations aligned]")
-
-    os.mkdir(args.dest)
-    offsets = range(args.min_offset, args.max_offset + 1, args.offset_step)
-    with Pool() as p:
-        if args.stats:
-            for s in p.imap(compute_chain_graph, offsets):
-                print_graph_stats(s)
+        # Dump graph
+        compress_pickle.dump(graph, os.path.join(arguments['output'], f'{graph.offset}.lz4'))
+        
+        # Print statistics or offset
+        if arguments['stats']:
+            print_graph_stats(graph)
         else:
-            print()
-            for offset in p.imap_unordered(compute_chain_graph, offsets):
-                print(offset, end=' ')
-                sys.stdout.flush()
+            print(graph.offset, end=' ')
