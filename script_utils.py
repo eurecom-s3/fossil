@@ -8,6 +8,7 @@ import os
 from chains import PointerSet, ChainGraph
 from dask.bag import Bag
 from dask.diagnostics import ProgressBar
+from typing import Any
 
 DEFAULT_TASKS_PER_PROCESSOR = 4
 
@@ -48,7 +49,7 @@ def _get_arguments_dests(parser:argparse.ArgumentParser) -> list[str]:
 
     return argument_dests
 
-def _get_dict_arguments(parser:argparse.ArgumentParser) -> dict:
+def _get_dict_arguments(parser:argparse.ArgumentParser) -> dict[str,Any]:
     arguments = parser.parse_args()
     attributes = _get_arguments_dests(parser)
     arguments_dict = {}
