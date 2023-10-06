@@ -75,7 +75,7 @@ def _compute_chain_graphs(min_offset:int, max_offset:int, offset_step:int, point
     return db.from_sequence(offsets, partition_size=1) \
         .map(lambda offset: ChainGraph(pointers, offset))
 
-def get_parser(output_type:str='directory') -> argparse.ArgumentParser:
+def get_parser() -> argparse.ArgumentParser:
     """ 
     Creates an ArgumentParser object and returns it.
     The arguments are as follows:

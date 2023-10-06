@@ -3,6 +3,7 @@ import compress_pickle
 import itertools
 import logging
 import numpy as np
+import os
 import script_utils
 from bdhash import BDHStack # type:ignore
 from bdhash import DTYPE as BDHASH_DTYPE
@@ -17,7 +18,7 @@ hashes_dtype = np.dtype([('hash', BDHASH_DTYPE), ('direction', np.bool_), ('head
 
 def parse_arguments() -> dict:
     # Get common parser and add argument
-    parser = script_utils.get_parser('pickle')
+    parser = script_utils.get_parser('directory')
     parser.add_argument('--min-size', type=int, default=3, help="minimum length of chains")
     return script_utils.parse_arguments(parser)
 
@@ -342,4 +343,4 @@ if __name__ == '__main__':
             logging.info(f'{name}: {matches_no:,} lists (avg length {len(pointer_to_match) / matches_no:,.2f})')
         except ZeroDivisionError:
             logging.info('Something was wrong, 0 matches... :(')
-    compress_pickle.dump(results, arguments['output'])
+    compress_pickle.dump(results, os.path.join(arguments['output'],'dll.lzma'))

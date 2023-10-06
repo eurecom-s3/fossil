@@ -1,11 +1,10 @@
 #!/usr/bin/env -S python3 -u
-
-from collections import defaultdict
 import compress_pickle
 import dask.array as dask_array
 import itertools
 import logging
 import numpy as np
+import os
 import script_utils
 import sortednp
 import sys
@@ -229,7 +228,7 @@ def find_trees(offsets:NDArray[np.int64], pointer_set:PointerSet) -> Generator[d
 
 if __name__ == '__main__':
     # Parse arguments
-    arguments = script_utils.parse_arguments(script_utils.get_parser('pickle'))
+    arguments = script_utils.parse_arguments(script_utils.get_parser())
     
     # Set pointer dtype and size
     if arguments['offset_step'] == 4:
@@ -248,4 +247,4 @@ if __name__ == '__main__':
             for children, root in tree.items()
         ])
         logging.info(f'{sum(len(x) for x in tree.values()):,} {index}-height binary trees ({len(tree):,} offset pairs)')
-    compress_pickle.dump(results, arguments['output'])
+    compress_pickle.dump(results, os.path.join(arguments['output'],'trees.lzma'))
