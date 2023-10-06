@@ -5,7 +5,7 @@ from chains import ChainGraph, Topology
 
 def parse_arguments() -> dict:
     # Get common parser and add argument
-    parser = script_utils.get_parser('directory')
+    parser = script_utils.get_parser()
     parser.add_argument('--stats', default=False, action='store_true')
     arguments = script_utils.parse_arguments(parser)
 
