@@ -18,7 +18,7 @@ hashes_dtype = np.dtype([('hash', BDHASH_DTYPE), ('direction', np.bool_), ('head
 
 def parse_arguments() -> dict:
     # Get common parser and add argument
-    parser = script_utils.get_parser('directory')
+    parser = script_utils.get_parser()
     parser.add_argument('--min-size', type=int, default=3, help="minimum length of chains")
     return script_utils.parse_arguments(parser)
 
