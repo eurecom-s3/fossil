@@ -703,7 +703,7 @@ def load_data_files(dataset_directory:str) -> dict[str, Any]:
     """
     Loads data files from the dataset directory.
     The returned dictionary has the following keys and types:
-        - pointers: dict[int, tuple[int, int]]
+        - pointers: dict[int, int]
         - virtual_to_offset: addrspaces.IMOffsets
         - bitmap: bitarray.bitarray
         - strings: dict[int, str]
