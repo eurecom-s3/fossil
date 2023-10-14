@@ -796,7 +796,7 @@ class AddressTranslator:
             rmap[dst].append(src)
 
         self.ptrs = dmap
-        self.rptrs = rmap
+        self.rptrs = dict(rmap)
 
     def retrieve_network_packets(self, ip_addrs, mac_addrs):
         print("Retrieve IP/Ethernet packets...")
