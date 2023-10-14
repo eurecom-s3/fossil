@@ -51,15 +51,15 @@ class MemoryObject:
 
 class PointersGroup(MemoryObject):
     def __init__(self, ptrs_list, offsets=tuple()):
-        self.ptrs_list = ptrs_list              # List of structural pointer (main ones)
+        self.ptrs_list:list[int] = ptrs_list              # List of structural pointer (main ones)
         self.mode_distance = 0                  # Most common distance among structural pointers (upper limit to structure size)
         self.structural_offsets = set([0])         # Offsets at which can be found structural pointers
-        self.dests_offsets = offsets            # Offsets to be used to reconstruct the topology starting from the structural pointers
+        self.dests_offsets:tuple[np.int64,np.int64] = offsets            # Offsets to be used to reconstruct the topology starting from the structural pointers
         
         self.autostructural_offsets = []        # Offsets of pointers pointing to the head of the structure itself
         self.shape = (-1, -1)                   # Tuple containing the assumed limits of the structs and threshold limit
         
-        self.near_ptrs = {}                     # dict offset:(set pointers) with at least threshold pointers
+        self.near_ptrs:dict = {}                     # dict offset:(set pointers) with at least threshold pointers
         self.near_ptrs_threshold = 0
 
         self.valid_near_offsets = set()         # Contains only offset which are not autostructural ones nor structural in the shape range
@@ -485,16 +485,16 @@ class LinkedList(PointersGroup):
             return True
         
 class DoubleLinkedList(PointersGroup):
-     def __init__(self, base_ptrs, base_ptrs2, offsets, is_ciclic):
+     def __init__(self, base_ptrs:list[int], base_ptrs2:list[int], offsets, is_ciclic):
         
-        s_distance = base_ptrs[0] - base_ptrs2[-1]
+        s_distance:int = base_ptrs[0] - base_ptrs2[-1]
 
         if s_distance < 0:
             super().__init__(base_ptrs, offsets)
-            self.ptrs_list_back = base_ptrs2
+            self.ptrs_list_back:list[int] = base_ptrs2
         else:
             super().__init__(base_ptrs2, offsets[::-1])
-            self.ptrs_list_back = base_ptrs
+            self.ptrs_list_back:list[int] = base_ptrs
 
 
         self.structural_offsets = set((0, abs(s_distance))) # Offsets of next and prev pointers
