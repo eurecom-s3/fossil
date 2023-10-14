@@ -238,7 +238,7 @@ if __name__ == '__main__':
         POINTER_DTYPE = np.uint64
         POINTER_SIZE = 8
 
-    # TODO: rename and type
+    # Find trees
     offsets:NDArray[np.int64] = np.arange(arguments['min_offset'], arguments['max_offset'] + 1, arguments['offset_step'])
     results:list[list[tuple[tuple[np.int64,np.int64], NDArray[np.uint32|np.uint64]]]] = []
     for index, tree in zip(itertools.count(1), find_trees(offsets, arguments['pointers'])):
