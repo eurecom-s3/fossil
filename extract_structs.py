@@ -43,8 +43,6 @@ RawTreesRoot = list[list[
     ]
 ]]
 
-RawPointers = dict[int, tuple[int, int]]
-
 #######################
 # Children extraction #
 #######################
@@ -60,7 +58,7 @@ def extract_children_linked_lists(
     trees: list[Tree],
     arrays: list[PointersGroup],
     most_common_offset: tuple[int, ...],
-    pointers: RawPointers
+    pointers: dict[int,int]
     ) -> dict[str, list[LinkedList]]:
     children_linked_lists:dict[str,list[LinkedList]] = {
         'cyclics': [],
@@ -108,8 +106,7 @@ def extract_children_linked_lists(
                         lists_pointers.add(pointed)
                         if pointed not in pointers:
                             break
-                        # TODO: understand which one should be used (after objects.py refactoring)
-                        pointed = pointers[pointed][0] + minimum_offset
+                        pointed = pointers[pointed] + minimum_offset
                     
                     # Remove the starting pointer
                     lists_pointers.remove(left_pointer)
@@ -154,7 +151,7 @@ def derive_structures(
     derived_structures:list[PointersGroup] = []
 
     for offset in primitive_structure.valid_near_offsets:
-        
+
         ##############################
         # Step 1: filter out offsets #
         ##############################
@@ -248,9 +245,10 @@ def extract_derived_structures(
                 if external_references.intersection(primitive_structure.ptrs_list)
             ]
             derived_structures_lists = pool.starmap(derive_structures, to_derive)
-            for derived_structure_list in derived_structures_lists:
-                derived_structures[structure_name].extend(derived_structure_list)
-    
+        for derived_structure_list in derived_structures_lists:
+            derived_structures[structure_name].extend(derived_structure_list)
+        
+        print(f'Found {len(derived_structures[structure_name])} derived structures')
     return derived_structures
 
 ##########################
@@ -294,7 +292,7 @@ def extract_linked_lists(external_reference:int, most_common_offset:tuple[int, .
 
     return linked_lists
 
-def extract_referenced_linked_lists(pointers:RawPointers, external_references:set[int], assigned_pointers:set[int], most_common_offset:tuple[int,...]) -> list[LinkedList]:
+def extract_referenced_linked_lists(pointers:dict[int,int], external_references:set[int], assigned_pointers:set[int], most_common_offset:tuple[int,...]) -> list[LinkedList]:
     print('Finding referenced linked lists...')
     linked_lists:list[LinkedList] = []
 
@@ -314,7 +312,7 @@ def extract_referenced_linked_lists(pointers:RawPointers, external_references:se
         possible_linked_lists.extend(possible_linked_lists_list)
 
     possible_linked_lists.sort(
-        key=lambda linked_list: len(linked_list.ptrs), 
+        key=lambda linked_list: len(linked_list.ptrs_list), 
         reverse=True
     )
 
@@ -337,7 +335,7 @@ def get_pointers_array_if_pointers_group(pointers_list:list[int]) -> PointersGro
     pointers_array = PtrsArray(pointers_list)
     return pointers_array.structs
 
-def extract_pointers_arrays(pointers:RawPointers, assigned_pointers:set[int], external_references:set[int]) -> list[PointersGroup]:
+def extract_pointers_arrays(pointers:dict[int,int], assigned_pointers:set[int], external_references:set[int]) -> list[PointersGroup]:
     print('Finding pointers arrays...')
 
     # Pointers of pointers but not autopointers nor already assigned
@@ -373,7 +371,7 @@ def extract_pointers_arrays(pointers:RawPointers, assigned_pointers:set[int], ex
     print(f'Found {len(arrays_of_pointers)} arrays of pointers')
     return arrays_of_pointers
 
-def extract_arrays_pointers(pointers:set[int]|dict[int,tuple[int,int]], cpu_features:dict[str,Any]) -> list[list[int]]:
+def extract_arrays_pointers(pointers:set[int]|dict[int,int], cpu_features:dict[str,Any]) -> list[list[int]]:
     pointers_arrays = []
     ordered_pointers = sorted(pointers)
 
@@ -390,7 +388,7 @@ def extract_arrays_pointers(pointers:set[int]|dict[int,tuple[int,int]], cpu_feat
         for keys_group in ProgressBarIterator(diff_keys_groups):
             if len(keys_group) < 3:
                 continue
-            keys_group = [cpu_features['int_conversion_function'](key) for key in keys_group]
+            keys_group = [cpu_features['uint_conversion_function'](key) for key in keys_group]
             pointers_arrays.append(keys_group)
 
     return pointers_arrays
@@ -398,16 +396,15 @@ def extract_arrays_pointers(pointers:set[int]|dict[int,tuple[int,int]], cpu_feat
 #############################
 # Strings arrays extraction #
 #############################
-def extract_strings_arrays(pointers:RawPointers, strings:dict[int,str], cpu_features:dict[str,Any]) -> list[PtrsArray]:
+def extract_strings_arrays(pointers:dict[int,int], strings:dict[int,str], cpu_features:dict[str,Any]) -> list[PtrsArray]:
     print('Finding arrays of strings...')
     
     # Define first strings candidates
     candidates = {
         pointer for pointer in pointers
-        # TODO: understand how a tuple(int,int) could be in a dict(int,str)
         if pointers[pointer] in strings
     }
-    
+
     strings_arrays = [
         PtrsArray(pointers_list)
         for pointers_list in extract_arrays_pointers(
@@ -428,7 +425,7 @@ def get_shape_and_strings(structure_object:Tree) -> Tree:
     structure_object.find_strings()
     return structure_object
 
-def get_tree_nodes(root:np.uint64, pointers:RawPointers, offsets:tuple[np.int64,np.int64], levels:int) -> list[int|None]:
+def get_tree_nodes(root:np.uint64, pointers:dict[int,int], offsets:tuple[np.int64,np.int64], levels:int) -> list[int|None]:
     """
     Returns the pointers as tree nodes
     """
@@ -473,12 +470,12 @@ def get_tree_nodes(root:np.uint64, pointers:RawPointers, offsets:tuple[np.int64,
         elements.extend(new_elements)
     return elements
 
-def extract_trees(tree_roots_raw:RawTreesRoot, pointers:RawPointers, assigned_pointers:set[int]) -> list[Tree]:
+def extract_trees(tree_roots_raw:RawTreesRoot, pointers:dict[int,int], assigned_pointers:set[int]) -> list[Tree]:
     #############################
     # Step 1: Extract the trees #
     #############################
     print('Converting trees...')
-    every_tree_list:list[list[Tree]] = []
+    trees_lists:list[list[Tree]] = []
     
     # For each tree level and associated level list
     for level, level_list in enumerate(tree_roots_raw[1:], start=2):
@@ -505,8 +502,8 @@ def extract_trees(tree_roots_raw:RawTreesRoot, pointers:RawPointers, assigned_po
                     print('[!] Loop detected')
 
         # Append the new trees
-        every_tree_list.append(new_trees)
-    
+        trees_lists.append(new_trees)
+
     ######################################################
     # Step 2: Remove tree with already assigned pointers #
     ######################################################
@@ -514,7 +511,7 @@ def extract_trees(tree_roots_raw:RawTreesRoot, pointers:RawPointers, assigned_po
     filtered_trees_list:list[list[Tree]] = []
 
     # For each tree list
-    for trees_list in every_tree_list:
+    for trees_list in trees_lists:
         filtered_trees:list[Tree] = []
 
         # For each tree
@@ -607,7 +604,7 @@ def get_shape_and_strings(structure_object:DoubleLinkedList) -> DoubleLinkedList
     structure_object.find_strings()
     return structure_object
 
-def extract_linear_cyclic_doubly_linked_lists(doubly_linked_lists_raw:RawDoublyLinkedLists, int_conversion_function:Callable[[int],int]) -> tuple[list[DoubleLinkedList], set[int], tuple[int, ...]]:
+def extract_linear_cyclic_doubly_linked_lists(doubly_linked_lists_raw:RawDoublyLinkedLists, uint_conversion_function:Callable[[int],int]) -> tuple[list[DoubleLinkedList], set[int], tuple[int, ...]]:
     """
     Extracts linear and cyclic doubly linked lists.
     Returns:
@@ -627,8 +624,8 @@ def extract_linear_cyclic_doubly_linked_lists(doubly_linked_lists_raw:RawDoublyL
     # Extract linear doubly linked lists
     for list_ in doubly_linked_lists_raw[0][0]:
         linear = DoubleLinkedList(
-            [int_conversion_function(i) for i in list_[0]],
-            [int_conversion_function(i) for i in list_[2]],
+            [uint_conversion_function(i) for i in list_[0]],
+            [uint_conversion_function(i) for i in list_[2]],
             (list_[1], list_[3]),
             False
         )
@@ -641,8 +638,8 @@ def extract_linear_cyclic_doubly_linked_lists(doubly_linked_lists_raw:RawDoublyL
     # Extract cyclic doubly linked lists
     for list_ in doubly_linked_lists_raw[1][0]:
         cyclic = DoubleLinkedList(
-            [int_conversion_function(i) for i in list_[0]],
-            [int_conversion_function(i) for i in list_[2]],
+            [uint_conversion_function(i) for i in list_[0]],
+            [uint_conversion_function(i) for i in list_[2]],
             (list_[1], list_[3]),
             True
         )
@@ -716,6 +713,7 @@ def load_data_files(dataset_directory:str) -> dict[str, Any]:
         - functions: set[int]
     """
     
+    print('Loading data files...')
     # Load data files
     pointers = compress_pickle.load(os.path.join(dataset_directory, 'extracted_ptrs.lzma'))
     strings = compress_pickle.load(os.path.join(dataset_directory, 'extracted_strs.lzma'))
@@ -801,7 +799,7 @@ if __name__ == '__main__':
     # Get most common doubly linked lists and the first set of assigned pointers
     doubly_linked_lists, assigned_pointers, most_common_offset = extract_linear_cyclic_doubly_linked_lists(
         data_files['doubly_linked_lists_raw'],
-        cpu_features['int_conversion_function']
+        cpu_features['uint_conversion_function']
     )
 
     # Differentiate the doubly linked lists by linearity
