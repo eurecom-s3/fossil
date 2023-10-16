@@ -65,13 +65,6 @@ def get_minimum_tree_distance_threshold(left_offset:np.int64, right_offset:np.in
         abs(right_offset - left_offset) + POINTER_SIZE,
         np.int64(2 * POINTER_SIZE + 1)
     ])
-    
-    return max(
-        threshold_from_offset[left_offset],                 # left threshold
-        threshold_from_offset[right_offset],                # right threshold
-        abs(right_offset - left_offset) + POINTER_SIZE,     # offsets difference + pointer size
-        2 * POINTER_SIZE + 1                                # double the pointer size + 1
-    )
 
 def get_chain_boundaries(chain:NDArray[np.int64]) -> NDArray[np.int64]:
     return np.concatenate([
