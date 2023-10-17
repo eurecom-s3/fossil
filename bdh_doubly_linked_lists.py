@@ -10,6 +10,7 @@ from bdhash import DTYPE as BDHASH_DTYPE
 from bdhash import fwd_hash
 from chains import ChainGraph, PointerSet
 from chains import POINTER_DTYPE, POINTER_SIZE, UNSIGNED_POINTER_DTYPE
+from constants import DOUBLY_LINKED_LISTS_FILE
 from dask.bag import Bag
 from more_itertools import pairwise
 
@@ -343,4 +344,4 @@ if __name__ == '__main__':
             logging.info(f'{name}: {matches_no:,} lists (avg length {len(pointer_to_match) / matches_no:,.2f})')
         except ZeroDivisionError:
             logging.info('Something was wrong, 0 matches... :(')
-    compress_pickle.dump(results, os.path.join(arguments['output'],'dll.lzma'))
+    compress_pickle.dump(results, os.path.join(arguments['output'], DOUBLY_LINKED_LISTS_FILE))

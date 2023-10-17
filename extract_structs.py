@@ -8,6 +8,27 @@ import os
 import script_utils
 
 from copy import deepcopy
+from constants import (
+    POINTERS_FILE,
+    STRINGS_FILE,
+    EXTERNAL_REFERENCES_FILE,
+    FUNCTIONS_FILE,
+    VIRTUALS_TO_OFFSETS_FILE,
+    BITMAP_FILE,
+    DOUBLY_LINKED_LISTS_FILE,
+    TREES_FILE,
+    RESULTS_FILE
+)
+from constants import (
+    TREES,
+    CIRCULAR_DOUBLY_LINKED_LISTS,
+    LINEAR_DOUBLY_LINKED_LISTS,
+    ARRAYS_OF_STRINGS,
+    ARRAYS_OF_POINTERS,
+    LINKED_LISTS,
+    DERIVED_STRUCTURES,
+    CHILDREN_STRUCTURES
+)
 from elftools.elf.elffile import ELFFile
 from multiprocessing import Pool 
 from numpy._typing import NDArray
@@ -221,18 +242,18 @@ def extract_derived_structures(
     external_references: set[int]
     ) -> dict[str, list[PointersGroup]]:
     derived_structures:dict[str,list[PointersGroup]] = {
-        'cyclics': [],
-        'linears': [],
-        'trees': [],
-        'arrays': [],
-        'lists': [],
+        CIRCULAR_DOUBLY_LINKED_LISTS: [],
+        LINEAR_DOUBLY_LINKED_LISTS: [],
+        TREES: [],
+        ARRAYS_OF_POINTERS: [],
+        LINKED_LISTS: [],
     }
     primitive_structures:list[tuple[str,list]] = [
-        ('cyclics', cyclics),
-        ('linears', linears),
-        ('trees', trees),
-        ('arrays', arrays),
-        ('lists', lists),
+        (CIRCULAR_DOUBLY_LINKED_LISTS, cyclics),
+        (LINEAR_DOUBLY_LINKED_LISTS, linears),
+        (TREES, trees),
+        (ARRAYS_OF_POINTERS, arrays),
+        (LINKED_LISTS, lists),
     ]
 
     for structure_name, structure_set in primitive_structures:
@@ -715,21 +736,21 @@ def load_data_files(dataset_directory:str) -> dict[str, Any]:
     
     print('Loading data files...')
     # Load data files
-    pointers = compress_pickle.load(os.path.join(dataset_directory, 'extracted_ptrs.lzma'))
-    strings = compress_pickle.load(os.path.join(dataset_directory, 'extracted_strs.lzma'))
+    pointers = compress_pickle.load(os.path.join(dataset_directory, POINTERS_FILE))
+    strings = compress_pickle.load(os.path.join(dataset_directory, STRINGS_FILE))
     external_references = set([
-        reference for reference in set(compress_pickle.load(os.path.join(dataset_directory, 'extracted_xrefs.lzma'))) 
+        reference for reference in set(compress_pickle.load(os.path.join(dataset_directory, EXTERNAL_REFERENCES_FILE))) 
         if reference in pointers and reference not in strings
     ])
-    functions = set(compress_pickle.load(os.path.join(dataset_directory, 'extracted_functions.lzma')))
+    functions = set(compress_pickle.load(os.path.join(dataset_directory, FUNCTIONS_FILE)))
 
     return {
         'pointers': pointers,
-        'virtual_to_offsets': compress_pickle.load(os.path.join(dataset_directory, 'extracted_v2o.lzma')),
-        'bitmap': compress_pickle.load(os.path.join(dataset_directory, 'extracted_btm.lzma')),
+        'virtual_to_offsets': compress_pickle.load(os.path.join(dataset_directory, VIRTUALS_TO_OFFSETS_FILE)),
+        'bitmap': compress_pickle.load(os.path.join(dataset_directory, BITMAP_FILE)),
         'strings': strings,
-        'doubly_linked_lists_raw': compress_pickle.load(os.path.join(dataset_directory, 'dll.lzma')),
-        'trees_roots_raw': compress_pickle.load(os.path.join(dataset_directory, 'trees.lzma')),
+        'doubly_linked_lists_raw': compress_pickle.load(os.path.join(dataset_directory, DOUBLY_LINKED_LISTS_FILE)),
+        'trees_roots_raw': compress_pickle.load(os.path.join(dataset_directory, TREES_FILE)),
         'external_references': external_references,
         'functions': functions
     }
@@ -858,12 +879,12 @@ if __name__ == '__main__':
 
     print('Saving results...')
     compress_pickle.dump({
-        'trees': trees,
-        'cyclics': cyclic_doubly_linked_lists,
-        'linears': linear_doubly_linked_lists,
-        'array_strings': strings_arrays,
-        'arrays': arrays_of_pointers,
-        'lists': linked_lists,
-        'derived': derived_structures,
-        'children': children_linked_lists
-    }, os.path.join(arguments['dataset'], 'results.lzma'))
+        TREES: trees,
+        CIRCULAR_DOUBLY_LINKED_LISTS: cyclic_doubly_linked_lists,
+        LINEAR_DOUBLY_LINKED_LISTS: linear_doubly_linked_lists,
+        ARRAYS_OF_STRINGS: strings_arrays,
+        ARRAYS_OF_POINTERS: arrays_of_pointers,
+        LINKED_LISTS: linked_lists,
+        DERIVED_STRUCTURES: derived_structures,
+        CHILDREN_STRUCTURES: children_linked_lists
+    }, os.path.join(arguments['dataset'], RESULTS_FILE))

@@ -10,6 +10,7 @@ import sortednp
 import sys
 
 from chains import PointerSet
+from constants import TREES_FILE
 from numpy._typing import NDArray
 from typing import Generator
 
@@ -240,4 +241,4 @@ if __name__ == '__main__':
             for children, root in tree.items()
         ])
         logging.info(f'{sum(len(x) for x in tree.values()):,} {index}-height binary trees ({len(tree):,} offset pairs)')
-    compress_pickle.dump(results, os.path.join(arguments['output'],'trees.lzma'))
+    compress_pickle.dump(results, os.path.join(arguments['output'],TREES_FILE))

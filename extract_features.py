@@ -10,6 +10,16 @@ import subprocess
 from addrspaces import RISCVSV32, RISCVSV39, AArch64Long, ARMShort, IntelAMD64, IntelIA32, IntelPAE
 from addrspaces import get_virtspace, ELFDump
 from compress_pickle import dump
+from constants import (
+    VIRTUALS_TO_OFFSETS_FILE,
+    OFFSETS_TO_VIRTUALS_FILE,
+    POINTERS_FILE,
+    INVERSE_POINTERS_FILE,
+    STRINGS_FILE,
+    BITMAP_FILE,
+    EXTERNAL_REFERENCES_FILE,
+    FUNCTIONS_FILE
+)
 from pathlib import Path
 from uuid import uuid4
 
@@ -173,14 +183,14 @@ def filter_analyzed_data(path_to_results:str, virtual_space:AArch64Long|ARMShort
 
 def dump_data(output_path:str, external_references:set, functions:set, virtual_space:AArch64Long|ARMShort|RISCVSV32|RISCVSV39|IntelAMD64|IntelIA32|IntelPAE) -> None:
     print('Saving features...')
-    dump(virtual_space.v2o,     os.path.join(output_path, 'extracted_v2o.lzma'))
-    dump(virtual_space.o2v,     os.path.join(output_path, 'extracted_o2v.lzma'))
-    dump(virtual_space.ptrs,    os.path.join(output_path, 'extracted_ptrs.lzma'))
-    dump(virtual_space.rptrs,   os.path.join(output_path, 'extracted_rptrs.lzma'))
-    dump(virtual_space.strs,    os.path.join(output_path, 'extracted_strs.lzma'))
-    dump(virtual_space.mem_btm, os.path.join(output_path, 'extracted_btm.lzma'))
-    dump(external_references,   os.path.join(output_path, 'extracted_xrefs.lzma'))
-    dump(functions,             os.path.join(output_path, 'extracted_functions.lzma'))
+    dump(virtual_space.v2o,     os.path.join(output_path, VIRTUALS_TO_OFFSETS_FILE))
+    dump(virtual_space.o2v,     os.path.join(output_path, OFFSETS_TO_VIRTUALS_FILE))
+    dump(virtual_space.ptrs,    os.path.join(output_path, POINTERS_FILE))
+    dump(virtual_space.rptrs,   os.path.join(output_path, INVERSE_POINTERS_FILE))
+    dump(virtual_space.strs,    os.path.join(output_path, STRINGS_FILE))
+    dump(virtual_space.mem_btm, os.path.join(output_path, BITMAP_FILE))
+    dump(external_references,   os.path.join(output_path, EXTERNAL_REFERENCES_FILE))
+    dump(functions,             os.path.join(output_path, FUNCTIONS_FILE))
 
 if __name__ == '__main__':
     # Arguments parsing and checking
