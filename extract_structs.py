@@ -199,13 +199,13 @@ def derive_structures(
         if null_pointers_count > 0.1 * len(primitive_structure.ptrs_list):
             continue
         # Ignore strings
-        if pointers.intersection(primitive_structure.strs):
+        if pointers.intersection(primitive_structure.strings):
             continue
         # Ignore backward pointers
         if pointers.intersection(primitive_structure.ptrs_list):
             continue
         # Ignore autopointers
-        if pointers.intersection(primitive_structure.autoptrs_set):
+        if pointers.intersection(primitive_structure.autopointers_set):
             continue
         # Ignore already assigned pointers
         if pointers.intersection(assigned_pointers):
@@ -215,7 +215,7 @@ def derive_structures(
         # Step 3: get the destination pointers and filter out the invalid ones #
         ########################################################################
         destination_pointers = list({
-            primitive_structure.ptrs[pointer] for pointer in pointers
+            primitive_structure.pointers[pointer] for pointer in pointers
         })
         # Ignore short pointers collections
         if len(destination_pointers) < 3:
@@ -291,11 +291,11 @@ def extract_linked_lists(external_reference:int, most_common_offset:tuple[int, .
 
         # While the pointer is in Memory, is not null and is new, then get the next pointer and cycle
         while True:
-            if current_pointer not in MemoryObject.ptrs:
+            if current_pointer not in MemoryObject.pointers:
                 break
-            if MemoryObject.ptrs_is_null(current_pointer):
+            if MemoryObject.is_pointer_null(current_pointer):
                 break
-            current_pointer = MemoryObject.ptrs[current_pointer] + offset
+            current_pointer = MemoryObject.pointers[current_pointer] + offset
             if current_pointer in pointers_set:
                 loop = True
                 break
