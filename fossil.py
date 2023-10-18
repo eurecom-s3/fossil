@@ -26,7 +26,7 @@ from constants import (
     LINKED_LISTS,
     TREES
 )
-from objects import PointersGroup, PtrsArray, Tree
+from objects import PointersGroup, PointersArray, Tree
 from prettytable import PrettyTable, ALL
 from statistics import mean
 from typing import Any
@@ -149,37 +149,37 @@ class FossilShell(Cmd):
     # Helping functions #
     #####################
     def __discard_offsets(self, structure:PointersGroup) -> PointersGroup:
-        offsets = list(structure.embedded_strs.keys())
+        offsets = list(structure.embedded_strings.keys())
         for offset in offsets:
             strings = [
                 self.strings[pointer] 
-                for pointer in structure.embedded_strs[offset]
+                for pointer in structure.embedded_strings[offset]
             ]
 
             # Remove if only one unique string is found
             if len(set(strings)) == 1:
-                structure.embedded_strs.pop(offset)
+                structure.embedded_strings.pop(offset)
                 continue
             
             # Remove if number of unique strings is less then the half of structure embedded strings
-            if len(set(strings)) < 0.5 * len(structure.embedded_strs[offset]):
-                structure.embedded_strs.pop(offset)
+            if len(set(strings)) < 0.5 * len(structure.embedded_strings[offset]):
+                structure.embedded_strings.pop(offset)
         
-        offsets = list(structure.pointed_strs.keys())
+        offsets = list(structure.pointed_strings.keys())
         for offset in offsets:
             strings = [
                 self.strings[pointer] 
-                for pointer in structure.pointed_strs[offset]
+                for pointer in structure.pointed_strings[offset]
             ]
 
             # Remove if only one unique string is found
             if len(set(strings)) == 1:
-                structure.pointed_strs.pop(offset)
+                structure.pointed_strings.pop(offset)
                 continue
             
             # Remove if number of unique strings is less then the half of structure pointed strings
-            if len(set(strings)) < 0.5 * len(structure.pointed_strs[offset]):
-                structure.pointed_strs.pop(offset)
+            if len(set(strings)) < 0.5 * len(structure.pointed_strings[offset]):
+                structure.pointed_strings.pop(offset)
 
         return structure
 
@@ -261,13 +261,13 @@ class FossilShell(Cmd):
             # For each array of strings
             for index, array in enumerate(data):
                 found_addresses = []
-                assert isinstance(array, PtrsArray)
+                assert isinstance(array, PointersArray)
 
                 # For each valid string address
                 for valid_string_address in valid_strings_addresses:
                     
                     # Get the common addresses and add them accordingly
-                    addresses_in_common = valid_string_address.intersection(array.strs_array)
+                    addresses_in_common = valid_string_address.intersection(array.strings_array)
                     if not addresses_in_common:
                         break
                     if not referenced_only:
@@ -294,7 +294,7 @@ class FossilShell(Cmd):
             assert isinstance(structure, PointersGroup)
 
             # For each offset, addresses in embedded strings
-            for offset, addresses in structure.embedded_strs.items():
+            for offset, addresses in structure.embedded_strings.items():
                 found_embedded_addresses = []
 
                 # For each valid string address
@@ -323,7 +323,7 @@ class FossilShell(Cmd):
                     ])
             
             # For each offset, addresses in pointed strings
-            for offset, addresses in structure.pointed_strs.items():
+            for offset, addresses in structure.pointed_strings.items():
                 found_pointed_addresses = []
 
                 # For each valid string address
@@ -370,9 +370,9 @@ class FossilShell(Cmd):
             except:
                 print(f'Not enough {structure_name}... Max index {len(self.results[structure_name]) - 1}')
                 return table
-            assert isinstance(array, PtrsArray)
+            assert isinstance(array, PointersArray)
 
-            for address in array.strs_array:
+            for address in array.strings_array:
                 table.add_row([
                     f'{hex(address - offset)}',
                     self.strings[address]
@@ -395,10 +395,10 @@ class FossilShell(Cmd):
                     if not pointer + offset in self.pointers.keys():
                         tree_strings.append(' ') 
                         continue
-                    if not offset in tree.pointed_strs.keys():
+                    if not offset in tree.pointed_strings.keys():
                         tree_strings.append(' ')
                         continue
-                    if not self.pointers[pointer + offset] in tree.pointed_strs[offset]:
+                    if not self.pointers[pointer + offset] in tree.pointed_strings[offset]:
                         tree_strings.append(' ')
                         continue
                     tree_strings.append(self.strings[self.pointers[pointer + offset]])
@@ -422,14 +422,14 @@ class FossilShell(Cmd):
             structure: PointersGroup = structures[index]
             
             if is_pointed:
-                for address in structure.pointed_strs[offset]:
+                for address in structure.pointed_strings[offset]:
                     if address in self.strings.keys():
                         table.add_row([
                             f'{hex(address - offset)}',
                             self.strings[address]
                         ])
             else:
-                for address in structure.embedded_strs[offset]:
+                for address in structure.embedded_strings[offset]:
                     if address in self.strings.keys():
                         table.add_row([
                             f'{hex(address - offset)}',
@@ -457,7 +457,7 @@ class FossilShell(Cmd):
         # Discard structures without strings
         structures = [
             structure for structure in structures 
-            if structure.embedded_strs or structure.pointed_strs
+            if structure.embedded_strings or structure.pointed_strings
         ]
 
         # Discard structures that have less than 80% of string pointers
@@ -465,11 +465,11 @@ class FossilShell(Cmd):
             structure for structure in structures 
             if any([
                 len(pointers) >= min(0.8 * len(structure), len(structure)-1) 
-                for pointers in structure.embedded_strs.values()
+                for pointers in structure.embedded_strings.values()
             ]) 
             or any([
                 len(pointers) >= min(0.8 * len(structure), len(structure)-1) 
-                for pointers in structure.pointed_strs.values()
+                for pointers in structure.pointed_strings.values()
             ])
         ]
 
@@ -480,13 +480,13 @@ class FossilShell(Cmd):
         # Get strings frequencies
         strings_frequencies:dict[str, list[int]] = dict()
         for index, structure in enumerate(structures):
-            for strings_pointers in structure.embedded_strs.values():
+            for strings_pointers in structure.embedded_strings.values():
                 for pointer in strings_pointers:
                     string = self.strings[pointer]
                     if not string in strings_frequencies.keys():
                         strings_frequencies[string] = []
                     strings_frequencies[string].append(index)
-            for strings_pointers in structure.pointed_strs.values():
+            for strings_pointers in structure.pointed_strings.values():
                 for pointer in strings_pointers:
                     string = self.strings[pointer]
                     if not string in strings_frequencies.keys():
@@ -495,11 +495,11 @@ class FossilShell(Cmd):
         
         def sort_by_strings_mean(structure:PointersGroup) -> float:
             entries = []
-            for strings_pointers in structure.embedded_strs.values():
+            for strings_pointers in structure.embedded_strings.values():
                 for pointer in strings_pointers:
                     string = self.strings[pointer]
                     entries.append(len(strings_frequencies[string]))
-            for strings_pointers in structure.pointed_strs.values():
+            for strings_pointers in structure.pointed_strings.values():
                 for pointer in strings_pointers:
                     string = self.strings[pointer]
                     entries.append(len(strings_frequencies[string]))
@@ -669,12 +669,12 @@ class FossilShell(Cmd):
         for structure_label in resulting_structures.keys():
             for structure in resulting_structures[structure_label]:
                 strings = []
-                for strings_pointers in structure.embedded_strs.values():
+                for strings_pointers in structure.embedded_strings.values():
                     strings.extend([
                         self.strings[pointer]
                         for pointer in strings_pointers
                     ])
-                for strings_pointers in structure.pointed_strs.values():
+                for strings_pointers in structure.pointed_strings.values():
                     strings.extend([
                         self.strings[pointer]
                         for pointer in strings_pointers

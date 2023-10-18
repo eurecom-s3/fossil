@@ -32,7 +32,7 @@ from constants import (
 from elftools.elf.elffile import ELFFile
 from multiprocessing import Pool 
 from numpy._typing import NDArray
-from objects import LinkedList, DoubleLinkedList, PointersGroup, Tree, PtrsArray, MemoryObject
+from objects import LinkedList, DoubleLinkedList, PointersGroup, Tree, PointersArray, MemoryObject
 from tqdm.auto import tqdm as ProgressBarIterator
 from typing import Callable, Any, Counter, overload
 
@@ -111,10 +111,10 @@ def extract_children_linked_lists(
                 continue
 
             # Else, for each child offset
-            for offset in structure.list_child_offsets:
+            for offset in structure.children_lists_offset:
 
                 # For each near pointer
-                for left_pointer in structure.near_ptrs[offset][0]:
+                for left_pointer in structure.near_pointers[offset][0]:
                     lists_pointers.clear()
                     pointed = left_pointer
 
@@ -184,25 +184,25 @@ def derive_structures(
         if offset in primitive_structure.structural_offsets:
             continue
         # Ignore child offsets
-        if offset in primitive_structure.list_child_offsets:
+        if offset in primitive_structure.children_lists_offset:
             continue
 
         ###############################
         # Step 2: filter out pointers #
         ###############################
 
-        pointers, null_pointers_count = primitive_structure.near_ptrs[offset]
+        pointers, null_pointers_count = primitive_structure.near_pointers[offset]
         # Ignore short pointers collections
         if len(pointers) < 3:
             continue
         # Ignore if at there is more than 10% NULLs
-        if null_pointers_count > 0.1 * len(primitive_structure.ptrs_list):
+        if null_pointers_count > 0.1 * len(primitive_structure.pointers_list):
             continue
         # Ignore strings
         if pointers.intersection(primitive_structure.strings):
             continue
         # Ignore backward pointers
-        if pointers.intersection(primitive_structure.ptrs_list):
+        if pointers.intersection(primitive_structure.pointers_list):
             continue
         # Ignore autopointers
         if pointers.intersection(primitive_structure.autopointers_set):
@@ -221,7 +221,7 @@ def derive_structures(
         if len(destination_pointers) < 3:
             continue
         # Ignore if at there is more than 10% NULLs
-        if len(destination_pointers) < 0.9 * len(primitive_structure.ptrs_list):
+        if len(destination_pointers) < 0.9 * len(primitive_structure.pointers_list):
             continue
         
         # Finally get the structure
@@ -308,7 +308,7 @@ def extract_linked_lists(external_reference:int, most_common_offset:tuple[int, .
             linked_list = LinkedList(pointers_list, (offset,), loop)
             linked_list.determine_shape()
             linked_list.find_strings()
-            if linked_list.embedded_strs.values() or linked_list.pointed_strs.values():
+            if linked_list.embedded_strings.values() or linked_list.pointed_strings.values():
                 linked_lists.append(linked_list)
 
     return linked_lists
@@ -333,17 +333,17 @@ def extract_referenced_linked_lists(pointers:dict[int,int], external_references:
         possible_linked_lists.extend(possible_linked_lists_list)
 
     possible_linked_lists.sort(
-        key=lambda linked_list: len(linked_list.ptrs_list), 
+        key=lambda linked_list: len(linked_list.pointers_list), 
         reverse=True
     )
 
     visited_pointers:set[int] = set()
     for linked_list in possible_linked_lists:
-        if visited_pointers.intersection(linked_list.ptrs_list):
+        if visited_pointers.intersection(linked_list.pointers_list):
             continue
-        if assigned_pointers.intersection(linked_list.ptrs_list):
+        if assigned_pointers.intersection(linked_list.pointers_list):
             continue
-        visited_pointers.update(linked_list.ptrs_list)
+        visited_pointers.update(linked_list.pointers_list)
         linked_lists.append(linked_list)
 
     print(f'Found {len(linked_lists)} linked lists')
@@ -353,8 +353,8 @@ def extract_referenced_linked_lists(pointers:dict[int,int], external_references:
 # Arrays extraction #
 #####################
 def get_pointers_array_if_pointers_group(pointers_list:list[int]) -> PointersGroup|None:
-    pointers_array = PtrsArray(pointers_list)
-    return pointers_array.structs
+    pointers_array = PointersArray(pointers_list)
+    return pointers_array.structure
 
 def extract_pointers_arrays(pointers:dict[int,int], assigned_pointers:set[int], external_references:set[int]) -> list[PointersGroup]:
     print('Finding pointers arrays...')
@@ -417,7 +417,7 @@ def extract_arrays_pointers(pointers:set[int]|dict[int,int], cpu_features:dict[s
 #############################
 # Strings arrays extraction #
 #############################
-def extract_strings_arrays(pointers:dict[int,int], strings:dict[int,str], cpu_features:dict[str,Any]) -> list[PtrsArray]:
+def extract_strings_arrays(pointers:dict[int,int], strings:dict[int,str], cpu_features:dict[str,Any]) -> list[PointersArray]:
     print('Finding arrays of strings...')
     
     # Define first strings candidates
@@ -427,7 +427,7 @@ def extract_strings_arrays(pointers:dict[int,int], strings:dict[int,str], cpu_fe
     }
 
     strings_arrays = [
-        PtrsArray(pointers_list)
+        PointersArray(pointers_list)
         for pointers_list in extract_arrays_pointers(
             candidates,
             cpu_features
@@ -512,10 +512,14 @@ def extract_trees(tree_roots_raw:RawTreesRoot, pointers:dict[int,int], assigned_
                 
                 # If it is a valid tree, append to new_trees
                 try:
+                    if offsets[0] < offsets[1]:
+                        normalized_offsets = (int(offsets[0]), int(offsets[1]))
+                    else: 
+                        normalized_offsets = (int(offsets[1]), int(offsets[0]))
                     new_trees.append(
                         Tree(
                             nodes,
-                            tuple(sorted(offsets, key=lambda x: int(x))),
+                            normalized_offsets,
                             level
                         )
                     )
@@ -539,7 +543,7 @@ def extract_trees(tree_roots_raw:RawTreesRoot, pointers:dict[int,int], assigned_
         for tree in trees_list:
 
             # Remove the ones that uses already assigned pointers (i.e. append valid ones only)
-            if not assigned_pointers.intersection(tree.ptrs_list):
+            if not assigned_pointers.intersection(tree.pointers_list):
                 filtered_trees.append(tree)
         filtered_trees_list.append(filtered_trees)
 
@@ -563,13 +567,13 @@ def extract_trees(tree_roots_raw:RawTreesRoot, pointers:dict[int,int], assigned_
             reduced_trees.append(tree)
 
             # Retrieve used pointers
-            tree_pointers = set(tree.ptrs_list)
+            tree_pointers = set(tree.pointers_list)
 
             # Remove every subsequent (lower) tree from trees_lists if they share pointers with the actual tree (higher)
             for sub_index in range(index + 1, len(filtered_trees_list)):
                 filtered_trees_list[sub_index] = [
                     sub_trees_list for sub_trees_list in filtered_trees_list[sub_index]
-                    if not tree_pointers.intersection(sub_trees_list.ptrs_list)
+                    if not tree_pointers.intersection(sub_trees_list.pointers_list)
                 ]
         reduced_trees_list.append(reduced_trees)
     reduced_trees_list.reverse()
@@ -593,12 +597,12 @@ def extract_trees(tree_roots_raw:RawTreesRoot, pointers:dict[int,int], assigned_
     ###########################################################
     final_trees.sort(key=lambda tree: tree.levels, reverse=True)
     most_common_trees_offsets = Counter([
-        tree.dests_offsets for tree in final_trees
+        tree.destination_offsets for tree in final_trees
         if tree.levels == final_trees[0].levels    
     ]).most_common(1)[0][0]
     most_common_trees = [
         tree for tree in final_trees
-        if tree.dests_offsets == most_common_trees_offsets
+        if tree.destination_offsets == most_common_trees_offsets
     ]
     most_common_trees.sort(key=lambda tree: tree.levels, reverse=True)
     print(f'Most common offset in trees: {most_common_trees_offsets}, {len(most_common_trees)}/{len(final_trees)}')
@@ -647,7 +651,7 @@ def extract_linear_cyclic_doubly_linked_lists(doubly_linked_lists_raw:RawDoublyL
         linear = DoubleLinkedList(
             [uint_conversion_function(i) for i in list_[0]],
             [uint_conversion_function(i) for i in list_[2]],
-            (list_[1], list_[3]),
+            (int(list_[1]), int(list_[3])),
             False
         )
         sorted_structural_offsets = tuple(sorted(linear.structural_offsets))
@@ -661,7 +665,7 @@ def extract_linear_cyclic_doubly_linked_lists(doubly_linked_lists_raw:RawDoublyL
         cyclic = DoubleLinkedList(
             [uint_conversion_function(i) for i in list_[0]],
             [uint_conversion_function(i) for i in list_[2]],
-            (list_[1], list_[3]),
+            (int(list_[1]), int(list_[3])),
             True
         )
         sorted_structural_offsets = tuple(sorted(cyclic.structural_offsets))
@@ -694,7 +698,7 @@ def extract_linear_cyclic_doubly_linked_lists(doubly_linked_lists_raw:RawDoublyL
     ], reverse=True)[0][1]
     most_common_doubly_linked_lists = not_degenerate[most_common_offset]
     most_common_doubly_linked_lists.sort(
-        key=lambda doubly_linked_list: len(doubly_linked_list.ptrs_list),
+        key=lambda doubly_linked_list: len(doubly_linked_list.pointers_list),
         reverse= True
     )
     print(f'Most common offset in cicles: {most_common_offset}, {len(most_common_doubly_linked_lists)}/{sum([len(doubly_linked_lists_) for doubly_linked_lists_ in doubly_linked_lists.values()])}')
@@ -704,8 +708,8 @@ def extract_linear_cyclic_doubly_linked_lists(doubly_linked_lists_raw:RawDoublyL
     ######################################
     assigned_pointers:list[int] = []
     for doubly_linked_list in most_common_doubly_linked_lists:
-        assigned_pointers.extend(doubly_linked_list.ptrs_list)
-        assigned_pointers.extend(doubly_linked_list.ptrs_list_back)
+        assigned_pointers.extend(doubly_linked_list.pointers_list)
+        assigned_pointers.extend(doubly_linked_list.inverse_pointers_list)
     unique_assigned_pointers = set(assigned_pointers)
 
     #####################################
