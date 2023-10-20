@@ -263,7 +263,7 @@ def extract_derived_structures(
             to_derive = [
                 (primitive_structure, assigned_pointers, max_structure_size)
                 for primitive_structure in structure_set
-                if external_references.intersection(primitive_structure.ptrs_list)
+                if external_references.intersection(primitive_structure.pointers_list)
             ]
             derived_structures_lists = pool.starmap(derive_structures, to_derive)
         for derived_structure_list in derived_structures_lists:
