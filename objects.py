@@ -327,6 +327,8 @@ class PointersGroup(MemoryObject):
                     null_pointers_number_by_offset[offset] = 0
 
                 null_pointers_number_by_offset[offset] += 1
+            if not offset in null_pointers_number_by_offset.keys():
+                null_pointers_number_by_offset[offset] = 0
 
         # Consider only offsets containing at least threshold% of pointers and NULLs
         real_threshold = min(
@@ -334,9 +336,9 @@ class PointersGroup(MemoryObject):
             threshold * base_pointers_length
         )
         near_pointers = {
-            offset:(set(ptrs), null_pointers_number_by_offset[offset]) 
-            for offset, ptrs in visited_pointers.items() 
-            if len(ptrs) + null_pointers_number_by_offset.get(offset, 0) >= real_threshold
+            offset:(set(pointers), null_pointers_number_by_offset[offset]) 
+            for offset, pointers in visited_pointers.items() 
+            if len(pointers) + null_pointers_number_by_offset.get(offset, 0) >= real_threshold
         }
 
         self.near_pointers = near_pointers
@@ -351,7 +353,7 @@ class PointersGroup(MemoryObject):
         start and pointers offsets with share the same difference between associated
         pointers and base_ptrs
         """
-        base_ptrs_array = np.array(self.pointers_list, dtype=np.uint64)
+        base_pointers_array = np.array(self.pointers_list, dtype=np.uint64)
         offset_minimum_distance:dict[int, int] = {}
         distances:dict[int, int] = dict()
 
@@ -378,7 +380,7 @@ class PointersGroup(MemoryObject):
 
             # Collect for each pointer the minimum distance between its destination and all the base pointers
             minimum_distances = [
-                self.uint_conversion_function(int(np.min(base_ptrs_array - pointer))) 
+                MemoryObject.uint_conversion_function(int(np.min(base_pointers_array - pointer))) 
                 for pointer in destination_pointers
             ] 
             if not minimum_distances:
