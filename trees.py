@@ -5,7 +5,7 @@ import itertools
 import logging
 import numpy as np
 import os
-import script_utils
+import arguments_parsing_common
 import sortednp
 import sys
 
@@ -222,7 +222,7 @@ def find_trees(offsets:NDArray[np.int64], pointer_set:PointerSet) -> Generator[d
 
 if __name__ == '__main__':
     # Parse arguments
-    arguments = script_utils.parse_arguments(script_utils.get_parser())
+    arguments = arguments_parsing_common.parse_arguments(arguments_parsing_common.get_parser())
     
     # Set pointer dtype and size
     if arguments['offset_step'] == 4:

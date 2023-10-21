@@ -5,7 +5,7 @@ import ctypes
 import compress_pickle
 import numpy as np 
 import os
-import script_utils
+import arguments_parsing_common
 
 from copy import deepcopy
 from constants import (
@@ -792,7 +792,7 @@ def parse_arguments() -> dict:
     parser.add_argument('dataset', type=str, help='Dataset directory. The directory must contain the results from the `extract_features.py` script (extracted_xxx.lzma), the result from the `trees.py` script (trees.lzma) and the result from `bdh_doubly_linked_lists.py` script (dll.lzma)')
     parser.add_argument('-max_size', type=int, default=None, help='Maximum structure size. If not specified, it is automatically defined')
     parser.add_argument('-debug', action='store_true', default=False)
-    return script_utils._get_dict_arguments(parser)
+    return arguments_parsing_common._get_dict_arguments(parser)
 
 def get_shape_and_strings(structure_object:PointersGroup) -> PointersGroup:
     structure_object.determine_shape()

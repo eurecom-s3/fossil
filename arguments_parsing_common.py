@@ -10,8 +10,6 @@ from dask.bag import Bag
 from dask.diagnostics import ProgressBar
 from typing import Any
 
-DEFAULT_TASKS_PER_PROCESSOR = 4
-
 # +------------------------------+
 # | Common usage "public" funcs  |
 # +------------------------------+
@@ -128,7 +126,3 @@ def parse_arguments(parser:argparse.ArgumentParser) -> dict:
         arguments['pointers']
     )
     return arguments
-
-
-def default_npartitions():
-    return DEFAULT_TASKS_PER_PROCESSOR * len(os.sched_getaffinity(0))

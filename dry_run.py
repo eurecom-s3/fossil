@@ -1,7 +1,7 @@
 #!/usr/bin/env -S python3 -u
 import argparse
 import os
-import script_utils
+import arguments_parsing_common
 import subprocess
 from constants import (
     POINTERS_FILE
@@ -14,7 +14,7 @@ def parse_arguments() -> dict[str, Any]:
     parser.add_argument('working_directory', type=str, help='The working directory in which files will be created and used.')
     parser.add_argument('--ghidra',          type=str, default=os.getenv("GHIDRA_PATH"), help="Path to GHIDRA installation")
     parser.add_argument('--skip',            type=int, help='Skip first n steps (Default: 0)', default=0)
-    return script_utils._get_dict_arguments(parser)
+    return arguments_parsing_common._get_dict_arguments(parser)
 
 def check_arguments(arguments:dict[str, Any]) -> dict[str, Any]:
     # Check elf file
