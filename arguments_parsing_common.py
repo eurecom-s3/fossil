@@ -3,7 +3,6 @@ import compress_pickle
 import dask.bag as db
 import logging
 import numpy as np
-import os
 
 from chains import PointerSet, ChainGraph
 from dask.bag import Bag
