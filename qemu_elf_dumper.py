@@ -146,7 +146,7 @@ def create_elf_header(architecture:str, is_little_endian:bool) -> bytearray:
 
     return elf_header
 
-def extract_registers_values(messages:list[dict]) -> dict:
+def extract_registers_values(messages:list[dict[str, str]]) -> dict[str, int]:
     registers = {}
     regex = re.compile(r"(?P<reg>\w+)\s+(?P<value>0x[0-9a-fA-F]+).+")
 
@@ -159,7 +159,7 @@ def extract_registers_values(messages:list[dict]) -> dict:
 
     return registers
 
-def split_memory_tree_data(memory_tree:str) -> list[dict]:
+def split_memory_tree_data(memory_tree:str) -> list[dict[str, str|int]]:
     """
     Splits memory data into a list of memory regions
     Returns a list of dictionaries with the following keys:
@@ -313,6 +313,7 @@ def dump_header(qmp_monitor:QEMUMonitorProtocol, gdb_controller:GdbController, i
         print('[Error] An error occured while trying to get the architecture. Exiting...')
         exit(9)
     architecture = architecture['return']['arch']
+    assert isinstance(architecture, str)
 
     # Dump registers
     gdb_controller.write('help')
