@@ -7,8 +7,7 @@ import json
 import logging
 import os
 import subprocess
-from addrspaces import RISCVSV32, RISCVSV39, AArch64Long, ARMShort, IntelAMD64, IntelIA32, IntelPAE
-from addrspaces import get_virtspace, ELFDump
+
 from compress_pickle import dump
 from constants import (
     VIRTUALS_TO_OFFSETS_FILE,
@@ -20,8 +19,19 @@ from constants import (
     EXTERNAL_REFERENCES_FILE,
     FUNCTIONS_FILE
 )
+from objects import ELFDump
 from pathlib import Path
 from uuid import uuid4
+from address_translators import get_virtual_space
+from address_translators import (
+    RISCVSV32, 
+    RISCVSV39, 
+    AArch64Long, 
+    ARMShort, 
+    IntelAMD64, 
+    IntelIA32, 
+    IntelPAE
+)
 
 data_keys = [
     'elf_dump', 'output_path', 'ignore_page',
@@ -92,7 +102,7 @@ def load_main_data(elf_dump:str, ignored_pages:list[int], output_path:str) -> tu
     # - Strings
     # - Memory bitmap
     print('Get virtual space...')
-    virtual_space = get_virtspace(elf_object, ignored_pages)
+    virtual_space = get_virtual_space(elf_object, ignored_pages)
     virtual_space.retrieve_pointers()
     virtual_space.retrieve_strings()
     virtual_space.create_bitmap()
@@ -147,7 +157,7 @@ def filter_analyzed_data(path_to_results:str, virtual_space:AArch64Long|ARMShort
     functions = set()
 
     # Check on virtual space
-    if virtual_space.v2o is None:
+    if virtual_space.virtual_to_offset is None:
         print('[Error] Something is wrong about virtual space! Exiting...')
         exit(5)
 
@@ -165,14 +175,14 @@ def filter_analyzed_data(path_to_results:str, virtual_space:AArch64Long|ARMShort
         [
             conversion_function(x) 
             for x in external_references_data.values()
-            if virtual_space.v2o[conversion_function(x)] != -1
+            if virtual_space.virtual_to_offset[conversion_function(x)] != -1
         ]
     )
     functions = set(
         [
             conversion_function(x)
             for x in functions.values()
-            if virtual_space.v2o[conversion_function(x)] != -1
+            if virtual_space.virtual_to_offset[conversion_function(x)] != -1
         ]
     )
 
@@ -183,14 +193,14 @@ def filter_analyzed_data(path_to_results:str, virtual_space:AArch64Long|ARMShort
 
 def dump_data(output_path:str, external_references:set, functions:set, virtual_space:AArch64Long|ARMShort|RISCVSV32|RISCVSV39|IntelAMD64|IntelIA32|IntelPAE) -> None:
     print('Saving features...')
-    dump(virtual_space.v2o,     os.path.join(output_path, VIRTUALS_TO_OFFSETS_FILE))
-    dump(virtual_space.o2v,     os.path.join(output_path, OFFSETS_TO_VIRTUALS_FILE))
-    dump(virtual_space.ptrs,    os.path.join(output_path, POINTERS_FILE))
-    dump(virtual_space.rptrs,   os.path.join(output_path, INVERSE_POINTERS_FILE))
-    dump(virtual_space.strs,    os.path.join(output_path, STRINGS_FILE))
-    dump(virtual_space.mem_btm, os.path.join(output_path, BITMAP_FILE))
-    dump(external_references,   os.path.join(output_path, EXTERNAL_REFERENCES_FILE))
-    dump(functions,             os.path.join(output_path, FUNCTIONS_FILE))
+    dump(virtual_space.virtual_to_offset,     os.path.join(output_path, VIRTUALS_TO_OFFSETS_FILE))
+    dump(virtual_space.offset_to_virtual,     os.path.join(output_path, OFFSETS_TO_VIRTUALS_FILE))
+    dump(virtual_space.pointers,              os.path.join(output_path, POINTERS_FILE))
+    dump(virtual_space.reverse_pointers,      os.path.join(output_path, INVERSE_POINTERS_FILE))
+    dump(virtual_space.strings,               os.path.join(output_path, STRINGS_FILE))
+    dump(virtual_space.memory_bitmap,         os.path.join(output_path, BITMAP_FILE))
+    dump(external_references,                 os.path.join(output_path, EXTERNAL_REFERENCES_FILE))
+    dump(functions,                           os.path.join(output_path, FUNCTIONS_FILE))
 
 if __name__ == '__main__':
     # Arguments parsing and checking

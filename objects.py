@@ -1,16 +1,27 @@
 import ctypes
 import ipaddress
+import json
 import numpy as np
+import os
+import random
+import subprocess
 
-from addrspaces import IMOffsets
 from bisect import bisect_left, bisect_right
 from bitarray import bitarray
 from collections import Counter
+from elftools.elf.elffile import ELFFile
+from elftools.elf.segments import NoteSegment
+from mappings import IntervalsMappingOffsets, IntervalsMappingSimple
+from numpy.typing import NDArray
 from io import BufferedReader
 from statistics import mode
+from string import ascii_lowercase, ascii_uppercase, digits
 from struct import unpack
-from typing import Callable
+from typing import Any, Callable
 
+#############################
+# Abstract Memory Objects   #
+#############################
 class MemoryObject:
 
     # Attributes type hinting
@@ -23,7 +34,7 @@ class MemoryObject:
     sorted_strings: list[int]
     strings_set: set[int]
     pointer_size: int
-    virtual_to_offset: IMOffsets
+    virtual_to_offset: IntervalsMappingOffsets
     bitmap: bitarray
     uint_conversion_function: Callable[[int], int]
     dtype: type
@@ -37,7 +48,7 @@ class MemoryObject:
         cls, 
         pointers: dict[int,int], 
         pointer_size: int, 
-        virtual_to_offset: IMOffsets, 
+        virtual_to_offset: IntervalsMappingOffsets, 
         bitmap: bitarray, 
         strings: dict[int,str], 
         external_references: set[int], 
@@ -571,6 +582,9 @@ class PointersGroup(MemoryObject):
                 for pointer in self.embedded_strings[offset]
             ]
 
+#####################
+# Data Structures   #
+#####################
 class LinkedList(PointersGroup):
     
     # Attributes type hinting
@@ -709,3 +723,246 @@ class PointersArray(MemoryObject):
                 if self.structure.shape != (-1, -1):
                     self.structure.find_strings() # <= the strings at offset 0 corresponds to char **array[XX] (array of double pointers to char) or an array of pointer to structs with field 0 as char *
                     self.structure.find_ip_addresses()
+
+#####################
+# ELF Dump Object   #
+#####################
+class ELFDump:
+    filename:str
+    machine_data:dict[str, Any]
+    physical_to_offset: IntervalsMappingOffsets               # Physical to RAM (ELF offset)
+    offset_to_physical: IntervalsMappingOffsets               # RAM (ELF offset) to Physical
+    physical_to_memory_mapped_device: IntervalsMappingSimple  # Physical to Memory Mapped Devices (ELF offset)
+    elf_buffer: NDArray[np.byte]
+
+    def __init__(self, filename:str) -> None:
+        self.filename = filename
+        self.machine_data = {}
+        self.elf_buffer = np.zeros(0, dtype=np.byte)
+        
+        with open(self.filename, 'rb') as elf_file_descriptor:
+            # Load the ELF in memory
+            self.elf_buffer = np.fromfile(elf_file_descriptor, dtype=np.byte)
+            elf_file_descriptor.seek(0)
+            # Parse the ELF file
+            self.__read_elf_file(elf_file_descriptor)
+
+    def __read_elf_file(self, elf_file_descriptor:BufferedReader) -> None:
+        """Parse the dump in ELF format"""
+        offset_to_physical_list:list[tuple[int, tuple[int,int]]] = []
+        physical_to_offset_list:list[tuple[int, tuple[int,int]]] = []
+        physical_to_memory_mapped_device_list:list[tuple[int,int]] = []
+        elf_file = ELFFile(elf_file_descriptor)
+
+        for segment in elf_file.iter_segments():
+            # NOTES
+            if isinstance(segment, NoteSegment):
+                for note in segment.iter_notes():
+                    # Ignore NOTE genrated by other softwares
+                    if note['n_name'] != 'FOSSIL':
+                        continue
+                    # At moment only one type of note
+                    if note['n_type'] != 0xdeadc0de:
+                        continue
+                    # Suppose only one deadcode note
+                    self.machine_data:dict[str, Any] = json.loads(note["n_desc"].rstrip(b"\x00"))
+                    self.machine_data['Endianness'] = 'little' if elf_file.header['e_ident'].EI_DATA == 'ELFDATA2LSB' else 'big'
+                    self.machine_data['Architecture'] = '_'.join(elf_file.header['e_machine'].split('_')[1:])
+            else:
+                # Fill arrays needed to translate physical addresses to file offsets
+                region_start = segment['p_vaddr']
+                region_end = region_start + segment['p_memsz']
+                assert isinstance(region_start, int)
+                assert isinstance(region_end, int)
+                if segment['p_filesz']:
+                    physical_offset = segment['p_offset']
+                    assert isinstance(physical_offset, int)
+                    physical_to_offset_list.append((region_start, (region_end, physical_offset)))
+                    offset_to_physical_list.append((physical_offset, (physical_offset + (region_end - region_start), region_start)))
+                else:
+                    for device in self.machine_data['MemoryMappedDevices']: # Possible because NOTES always the first segment
+                        if device[0] == region_start:
+                            break
+                    physical_to_memory_mapped_device_list.append((region_start, region_end))
+
+        # Compact intervals
+        physical_to_offset_list = self._compact_intervals(physical_to_offset_list)
+        offset_to_physical_list = self._compact_intervals(offset_to_physical_list)
+        physical_to_memory_mapped_device_list = self._compact_intervals_simple(physical_to_memory_mapped_device_list)
+
+        x = sorted(physical_to_offset_list)
+        x = zip(x)
+        x = list(x)
+
+        self.physical_to_offset = IntervalsMappingOffsets(*list(zip(*sorted(physical_to_offset_list))))
+        self.offset_to_physical = IntervalsMappingOffsets(*list(zip(*sorted(offset_to_physical_list))))
+        self.physical_to_memory_mapped_device = IntervalsMappingSimple(*list(zip(*sorted(physical_to_memory_mapped_device_list))))
+    
+    def _compact_intervals_simple(self, intervals:list[tuple[int, int]]) -> list[tuple[int, int]]:
+        """
+        Compact intervals if pointer values are contiguous
+        """
+        # Initialize data
+        fused_intervals:list[tuple[int, int]] = []
+        previous_begin = previous_end = -1
+        begin = end = -1
+
+        # Compute intervals
+        for interval in intervals:
+            begin, end = interval            
+            if previous_end == begin:
+                previous_end = end
+            else:
+                fused_intervals.append((previous_begin, previous_end))
+                previous_begin = begin
+                previous_end = end
+        
+        if previous_begin != begin:
+            fused_intervals.append((previous_begin, previous_end))
+        else:
+            fused_intervals.append((begin, end))
+
+        return fused_intervals[1:]
+
+    def _compact_intervals(self, intervals:list[tuple[int, tuple[int, int]]]) -> list[tuple[int, tuple[int, int]]]:
+        """
+        Compact intervals if pointer and pointed values are contiguous
+        """
+        # Initialize data
+        fused_intervals:list[tuple[int, tuple[int,int]]] = []
+        previous_begin = previous_end = previous_physical = -1
+        begin = end = physical = -1
+
+        # Compute fused intervals
+        for interval in intervals:
+            begin, (end, physical) = interval            
+            if previous_end == begin and previous_physical + (previous_end - previous_begin) == physical:
+                previous_end = end
+            else:
+                fused_intervals.append((previous_begin, (previous_end, previous_physical)))
+                previous_begin = begin
+                previous_end = end
+                previous_physical = physical
+        
+        if previous_begin != begin:
+            fused_intervals.append((previous_begin, (previous_end, previous_physical)))
+        else:
+            fused_intervals.append((begin, (end, physical)))
+
+        return fused_intervals[1:]
+    
+    def in_ram(self, physical_address:int, size:int = 1) -> bool:
+        """Return True if the interval is completely in RAM"""
+        return self.physical_to_offset.contains(physical_address, size)[0] == size
+
+    def in_memory_mapped_device(self, physical_address:int, size:int = 1) -> bool:
+        """
+        Returns True if the interval is completely in Memory mapped devices space
+        """
+        return self.physical_to_memory_mapped_device.contains(physical_address, size) != -1
+
+    def get_data(self, physical_address:int, size:int) -> bytes:
+        """
+        Returns the data at physical address (interval)
+        """
+        size_available, intervals = self.physical_to_offset.contains(physical_address, size)
+        if size_available != size:
+            return bytes()
+        
+        data = bytearray()
+        for interval in intervals:
+            _, interval_size, offset = interval
+            data.extend(self.elf_buffer[offset:offset+interval_size].tobytes())
+
+        return data
+    
+    def get_raw_data(self, offset:int, size:int = 1) -> bytes:
+        """
+        Returns the data at the offset in the ELF (interval)
+        """
+        return self.elf_buffer[offset:offset+size].tobytes()
+
+    def get_machine_data(self) -> dict[str, Any]:
+        """
+        Returns a dict containing machine configuration
+        """
+        return self.machine_data
+
+    def get_ram_regions(self) -> zip:
+        """
+        Returns all the RAM regions of the machine and the associated offset
+        """
+        return self.physical_to_offset.get_values()
+
+    def get_memory_mapped_device_regions(self) -> zip:
+        """
+        Returns all the Memory mapped devices intervals of the machine and the associated offset
+        """
+        return self.physical_to_memory_mapped_device.get_values()
+
+    def retrieve_strings_offsets(self, minimum_length:int = 3) -> list[tuple[str, int]]:
+        # Generate random separator
+        separator = ''.join(
+            random.choice(ascii_lowercase + ascii_uppercase + digits) 
+            for _ in range(10)
+        )
+
+        # Use the external program `strings` which is order of magnitude
+        # faster (collects also UTF-16)!
+        elf_path = os.path.realpath(self.filename)
+        strings_process = subprocess.Popen([
+                'strings', '-a', '-n', 
+                str(minimum_length), 
+                '-t', 'x', '-w', '-s', 
+                separator, elf_path
+            ], 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            universal_newlines=True
+        )
+        strings_stdout, strings_stderr = strings_process.communicate()
+        if strings_process.returncode:
+            print(strings_stderr)
+            raise OSError
+
+        strings_process = subprocess.Popen([
+                'strings', '-a', '-e', 
+                'l' if self.machine_data['Endianness'] == 'little' 
+                else 'b', 
+                '-n', str(minimum_length), 
+                '-t', 'x', '-w', '-s', 
+                separator, elf_path
+            ], 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            universal_newlines=True
+        )
+        strings_out_utf16, strings_stderr = strings_process.communicate()
+        if strings_process.returncode:
+            print(strings_stderr)
+            raise OSError
+        strings_stdout = strings_stdout + ' ' + strings_out_utf16
+
+        # Translate file offset in physical addresses (ignoring ELF internal strings)
+        strings_offsets:list[tuple[str, int]] = []
+        for string in strings_stdout.split(separator):
+            try:
+                physical_offset, value = string.lstrip().split(maxsplit=1)
+                physical_offset = int(physical_offset, 16)
+            except:
+                # Ignore not valid lines
+                continue
+
+            # Allow only NULL-terminated strings
+            try:
+                if self.elf_buffer[physical_offset + len(value)] != 0:
+                    continue
+            except:
+                # End of File
+                pass
+
+            if self.offset_to_physical[physical_offset] == -1:
+                continue
+
+            strings_offsets.append((value, physical_offset))
+        return strings_offsets
