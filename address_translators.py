@@ -1401,7 +1401,7 @@ class AArch64Long(AArch64Translator):
 
     def __init__(
         self, 
-        table_addresss:int, 
+        table_address:int, 
         elf_dump:ELFDump, 
         t1sz:int, 
         tg1:int, 
