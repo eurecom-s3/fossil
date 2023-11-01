@@ -789,7 +789,7 @@ def get_cpu_features(elf_filename:str, max_size:None|int) -> dict[str, Any]:
 def parse_arguments() -> dict:
     parser = argparse.ArgumentParser()
     parser.add_argument('elf_file', type=str, help='The virtual machine ELF dump file')
-    parser.add_argument('dataset', type=str, help='Dataset directory. The directory must contain the results from the `extract_features.py` script (extracted_xxx.lzma), the result from the `trees.py` script (trees.lzma) and the result from `bdh_doubly_linked_lists.py` script (dll.lzma)')
+    parser.add_argument('dataset', type=str, help='Dataset directory. The directory must contain the results from the `extract_features.py` script (extracted_xxx.lzma), the result from the `trees.py` script (extracted_trees.lzma) and the result from `bdh_doubly_linked_lists.py` script (extracted_doubly_linked_lists.lzma)')
     parser.add_argument('-max_size', type=int, default=None, help='Maximum structure size. If not specified, it is automatically defined')
     parser.add_argument('-debug', action='store_true', default=False)
     return arguments_parsing_common._get_dict_arguments(parser)
