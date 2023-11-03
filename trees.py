@@ -158,7 +158,7 @@ def get_height_one_trees(length_two_chains_generator:Generator[NDArray[np.int64]
 def compute_len_two_chains(encapsulated_offset: NDArray[np.int64], pointer_set: PointerSet) -> NDArray[np.int64]:
     # Get raw offset and source and destination pointers
     offset:np.int64 = encapsulated_offset[0]
-    src_pointers, dst_pointers = pointer_set.src, pointer_set.dst
+    src_pointers, dst_pointers = pointer_set.src_pointers, pointer_set.dst_pointers
     
     # Filter valid pointers by checking threshold range
     in_range = abs(dst_pointers - src_pointers) >= get_distance_threshold(offset)

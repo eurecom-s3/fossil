@@ -1,49 +1,36 @@
 import logging
-from typing import Iterable, List
-import warnings
-
 import numpy as np
+import warnings
 from numpy.typing import NDArray
+from typing import Iterable, List
 
+#########################
+# Data initialization   #
+#########################
 warnings.filterwarnings('ignore', 'overflow encountered in', RuntimeWarning, __name__)
-
-
-def _inverse(x, m):
-    # Extended Euclidean algorithm: https://stackoverflow.com/a/14093613/550097
-    a, b, u = 0, m, 1
-    while x > 0:
-        q, r = divmod(b, x)
-        x, a, b, u = b % x, u, x, a - q * u
-    if b == 1:
-        return a % m
-    raise ValueError("must be co-prime")
-
-
-DTYPE = np.uint64
-C = DTYPE(6364136223846793005)  # the magic number Knuth uses
-INV_C = DTYPE(_inverse(int(C), 2 ** 64))
+C = np.uint64(6364136223846793005)  # the magic number Knuth uses
+INV_C = np.uint64(pow(int(C), -1, 2 ** 64))
 assert C * INV_C == 1
-powers = C ** np.arange(1024, dtype=DTYPE)  # will be expanded if needed
+powers = C ** np.arange(1024, dtype=np.uint64)  # will be expanded if needed
 
 
 def _expand_powers():
     global powers
-    powers = np.append(powers, C ** np.arange(len(powers), 2 * len(powers), dtype=DTYPE))
+    powers = np.append(powers, C ** np.arange(len(powers), 2 * len(powers), dtype=np.uint64))
 
-
-def fwd_hash(seq: NDArray):
-    n = len(seq)
-    while n > powers.size:
+def compute_forward_hash(sequence: NDArray) -> np.uint64:
+    sequence_length = len(sequence)
+    while sequence_length > powers.size:
         _expand_powers()
-    s = DTYPE(0)
-    for v, p in zip(seq, reversed(powers[:n])):
-        s += p * DTYPE(v)
-    return s
+    hash_value = np.uint64(0)
+    for value, power in zip(sequence, reversed(powers[:sequence_length])):
+        hash_value += power * np.uint64(value)
+    return hash_value
 
 
 class PyBDHash(object):
-    h0: DTYPE
-    _s1: DTYPE
+    h0: np.uint64
+    _s1: np.uint64
     size: int
 
     def __init__(self, iterable=()):
@@ -51,12 +38,12 @@ class PyBDHash(object):
         self.update(iterable)
 
     def clear(self):
-        self.h0 = DTYPE(0)
-        self._s1 = DTYPE(0)
+        self.h0 = np.uint64(0)
+        self._s1 = np.uint64(0)
         self.size = 0
 
     def append(self, v):
-        v = DTYPE(v)
+        v = np.uint64(v)
         self.h0  = (self.h0 * C) + v
         self._s1 = (self._s1 * INV_C) - v
         self.size += 1
@@ -66,7 +53,7 @@ class PyBDHash(object):
             self.append(v)
 
     def pop(self, v):
-        v = DTYPE(v)
+        v = np.uint64(v)
         self.h0 = (self.h0 - v) * INV_C
         self._s1 = (self._s1 + v) * C
         self.size -= 1
@@ -76,7 +63,6 @@ class PyBDHash(object):
         while self.size > powers.size:
             _expand_powers()
         return self.h0, powers[self.size - 1] * self._s1
-
 
 class PyBDHStack:
     _l: List[np.ndarray]
@@ -107,16 +93,15 @@ class PyBDHStack:
         self._h.pop(v)
         return v
 
-    def update(self, iterable: Iterable[DTYPE]):
+    def update(self, iterable: Iterable[np.uint64]):
         for item in iterable:
             self.append(item)
 
     def hash(self):
         return self._h.hash()
 
-
 try:
     from cython_bdhash import BDHash, BDHStack # type:ignore
 except ImportError:
-    logging.warn("Cython-compiled version of bdhash not available, compile with `python setup.py build_ext --inplace`")
+    logging.warn('Cython-compiled version of bdhash not available, compile with `python setup.py build_ext --inplace`')
     BDHash, BDHStack = PyBDHash, PyBDHStack

@@ -6,16 +6,18 @@ import numpy as np
 import os
 import arguments_parsing_common
 from bdhash import BDHStack # type:ignore
-from bdhash import DTYPE as BDHASH_DTYPE
-from bdhash import fwd_hash
+from bdhash import compute_forward_hash
 from chains import ChainGraph, PointerSet
-from chains import POINTER_DTYPE, POINTER_SIZE, UNSIGNED_POINTER_DTYPE
+from chains import POINTER_SIZE
 from constants import DOUBLY_LINKED_LISTS_FILE
 from dask.bag import Bag
 from more_itertools import pairwise
+from numpy._typing import NDArray
 
-hashes_dtype = np.dtype([('hash', BDHASH_DTYPE), ('direction', np.bool_), ('head', POINTER_DTYPE),
-                         ('tail', POINTER_DTYPE), ('offset', np.int32), ('size', np.uint64)])
+MatchesType = tuple[list[tuple[NDArray,np.int64,NDArray,np.int64]], dict[np.int64,int]]
+
+HashesType = np.dtype([('hash', np.uint64), ('direction', np.bool_), ('head', np.int64),
+                         ('tail', np.int64), ('offset', np.int32), ('size', np.uint64)])
 
 def parse_arguments() -> dict:
     # Get common parser and add argument
@@ -23,7 +25,7 @@ def parse_arguments() -> dict:
     parser.add_argument('--min-size', type=int, default=3, help="minimum length of chains (default: 3)")
     return arguments_parsing_common.parse_arguments(parser)
 
-def bidirectional_hashes(graph: ChainGraph, min_size:int) -> tuple[np.ndarray, np.ndarray]:
+def bidirectional_hashes(graph: ChainGraph, min_size:int) -> tuple[NDArray[HashesType], NDArray[HashesType]]:
     """
     Computes bidirectional hashes.
     Returns 2 multidimensional arrays: linear and cyclic
@@ -36,11 +38,11 @@ def bidirectional_hashes(graph: ChainGraph, min_size:int) -> tuple[np.ndarray, n
     
     # Compute search
     for cycle, rtrees in graph.component_breakdowns(min_size):
-        
+
         # Cyclic search
         if cycle is not None:
-            first_hash = fwd_hash(np.diff(cycle))
-            second_hash = fwd_hash(np.diff(np.roll(cycle, -1)[::-1]))
+            first_hash = compute_forward_hash(np.diff(cycle))
+            second_hash = compute_forward_hash(np.diff(np.roll(cycle, -1)[::-1]))
             
             # no palindromic sequences or hash conflicts
             assert first_hash != second_hash
@@ -62,9 +64,9 @@ def bidirectional_hashes(graph: ChainGraph, min_size:int) -> tuple[np.ndarray, n
         for sink, parent_mapping in rtrees:
             diffs = BDHStack()
 
-            stack:list[tuple[int, np.int64, np.int64]]
+            stack:list[tuple[np.int64, np.int64, np.int64]]
             stack = [
-                (0, sink, parent) 
+                (np.int64(0), sink, parent) 
                 for parent in parent_mapping[sink]
             ]
 
@@ -102,14 +104,14 @@ def bidirectional_hashes(graph: ChainGraph, min_size:int) -> tuple[np.ndarray, n
                 )
 
     # Process results 
-    linear = np.array(linear_results, hashes_dtype)
-    cyclic = np.array(cyclic_results, hashes_dtype)
+    linear = np.array(linear_results, HashesType)
+    cyclic = np.array(cyclic_results, HashesType)
     linear.sort(order=('size', 'hash', 'direction'))
     cyclic.sort(order=('size', 'hash', 'direction'))
 
     return linear, cyclic
 
-def get_unique_indices(array:np.ndarray) -> np.ndarray:
+def get_unique_indices(array:NDArray) -> NDArray:
     """
     Returns the indices of each first unique element of the sorted array
     """
@@ -121,7 +123,7 @@ def get_unique_indices(array:np.ndarray) -> np.ndarray:
     mask[1:] = array[1:] != array[:-1]
     return np.flatnonzero(mask)
 
-def get_parameters_boundaries(rows:np.ndarray, assigned:dict) -> list[tuple[tuple[POINTER_DTYPE,POINTER_DTYPE,POINTER_DTYPE],tuple[POINTER_DTYPE,POINTER_DTYPE]]]:
+def get_parameters_boundaries(rows:NDArray, assigned:dict) -> list[tuple[tuple[np.int64,np.int64,np.int64],tuple[np.int64,np.int64]]]:
             """
             Calculates paramaters for building the chain
             Results are sorted by lowest right boundary
@@ -171,16 +173,16 @@ def get_parameters_boundaries(rows:np.ndarray, assigned:dict) -> list[tuple[tupl
             result.sort(key=lambda pair: pair[1][1])
             return result
 
-def compute_chain(pointers: dict[POINTER_DTYPE,POINTER_DTYPE], head:POINTER_DTYPE, offset:POINTER_DTYPE, size:POINTER_DTYPE):
+def compute_chain(pointers: dict[np.int64,np.int64], head:np.int64, offset:np.int64, size:np.int64):
     """Compute a chain using the pointers dictionary."""
 
     result = [head]
     while len(result) < size:
         head = pointers[head] + offset
         result.append(head)
-    return np.array(result, dtype=UNSIGNED_POINTER_DTYPE).astype(POINTER_DTYPE)
+    return np.array(result, dtype=np.uint64).astype(np.int64)
 
-def compute_matches(data: np.ndarray, pointers: dict[POINTER_DTYPE, POINTER_DTYPE], label: str) -> tuple[list[tuple[np.ndarray,POINTER_DTYPE,np.ndarray,POINTER_DTYPE]], dict[POINTER_DTYPE,int]]:
+def compute_matches(data: NDArray[HashesType], pointers: dict[np.int64, np.int64], label: str) -> MatchesType:
     """
     Find matches from the computed hashes.
     Returns a list (matches) and a dict (assigned)
@@ -200,7 +202,7 @@ def compute_matches(data: np.ndarray, pointers: dict[POINTER_DTYPE, POINTER_DTYP
     # Data filtering
     # --------------
     # Take only duplicate values. See how np.unique is implemented to get how this works.
-    non_unique_mask = np.concatenate([~np.diff(data['hash']).astype(bool), [False]])
+    non_unique_mask:NDArray[bool] = np.concatenate([~np.diff(data['hash']).astype(bool), [False]])
     non_unique_mask |= np.roll(non_unique_mask, 1)
     data = data[non_unique_mask]
 
@@ -324,13 +326,17 @@ def compute_matches(data: np.ndarray, pointers: dict[POINTER_DTYPE, POINTER_DTYP
                 break
     return matches, assigned
 
-def search_linear_and_cyclic_matches(graphs:Bag, min_size:int, pointer_set:PointerSet):
-    pointers = pointer_set.to_dict()
-    bd_hashes:zip[tuple[np.ndarray,np.ndarray]] = zip(*graphs.map(bidirectional_hashes, min_size).compute())
+def search_linear_and_cyclic_matches(graphs:Bag, min_size:int, pointer_set:PointerSet) -> tuple[MatchesType, MatchesType]:
+    pointers:dict[np.int64, np.int64] = pointer_set.to_dict()
+    bd_hashes:zip[tuple[NDArray,NDArray]] = zip(*graphs.map(bidirectional_hashes, min_size).compute())
+    
     linear, cyclic = [
         np.concatenate(arrays) 
         for arrays in bd_hashes
     ]
+    linear: NDArray[HashesType]
+    cyclic: NDArray[HashesType]
+    
     logging.info(f'hashes: {linear.size:,} (linear), {cyclic.size:,} (cyclic)')
     return compute_matches(linear, pointers, 'linear'), \
             compute_matches(cyclic, pointers, 'cyclic')
