@@ -7,7 +7,7 @@ from mappings import (
     IntervalsMappingOverlapping,
     IntervalsMappingData
 )
-from objects import ELFDump
+from memory_objects import ELFDump
 from struct import iter_unpack
 from tqdm import tqdm
 from typing import Any, Callable

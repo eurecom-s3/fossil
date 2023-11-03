@@ -9,7 +9,7 @@ import arguments_parsing_common
 import sortednp
 import sys
 
-from chains import PointerSet
+from chains_objects import PointerSet
 from constants import TREES_FILE
 from numpy._typing import NDArray
 from typing import Generator

@@ -5,6 +5,6 @@ from Cython.Build import cythonize
 
 setup(
     name='Zero-knowledge memory',
-    ext_modules=cythonize("cython_bdhash.pyx", language_level="3str"),
+    ext_modules=cythonize('cython_bidirectional_hashes.pyx', language_level='3str'),
     zip_safe=False,
 )

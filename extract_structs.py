@@ -1,11 +1,11 @@
 #!/usr/bin/env -S python3 -u
 
 import argparse
-import ctypes
+import arguments_parsing_common
 import compress_pickle
+import ctypes
 import numpy as np 
 import os
-import arguments_parsing_common
 
 from copy import deepcopy
 from constants import (
@@ -30,9 +30,9 @@ from constants import (
     CHILDREN_STRUCTURES
 )
 from elftools.elf.elffile import ELFFile
+from memory_objects import LinkedList, DoubleLinkedList, PointersGroup, Tree, PointersArray, MemoryObject
 from multiprocessing import Pool 
 from numpy._typing import NDArray
-from objects import LinkedList, DoubleLinkedList, PointersGroup, Tree, PointersArray, MemoryObject
 from tqdm.auto import tqdm as ProgressBarIterator
 from typing import Callable, Any, Counter, overload
 
@@ -682,7 +682,7 @@ def extract_linear_cyclic_doubly_linked_lists(doubly_linked_lists_raw:RawDoublyL
     print('Reconstructing relations between cicles...')
 
     # Filter out degenerate doubly linked lists
-    # Degenerates are those dll whose structs have different distances between prev and next pointers (check `objects.py` for more)
+    # Degenerates are those dll whose structs have different distances between prev and next pointers (check `memory_objects.py` for more)
     not_degenerate:dict[tuple[int, ...],list[DoubleLinkedList]] = dict()
     for offset in doubly_linked_lists.keys():
         not_degenerate[offset] = [
@@ -789,7 +789,7 @@ def get_cpu_features(elf_filename:str, max_size:None|int) -> dict[str, Any]:
 def parse_arguments() -> dict:
     parser = argparse.ArgumentParser()
     parser.add_argument('elf_file', type=str, help='The virtual machine ELF dump file')
-    parser.add_argument('dataset', type=str, help='Dataset directory. The directory must contain the results from the `extract_features.py` script (extracted_xxx.lzma), the result from the `trees.py` script (extracted_trees.lzma) and the result from `bdh_doubly_linked_lists.py` script (extracted_doubly_linked_lists.lzma)')
+    parser.add_argument('dataset', type=str, help='Dataset directory. The directory must contain the results from the `extract_features.py` script (extracted_xxx.lzma), the result from the `trees.py` script (extracted_trees.lzma) and the result from `doubly_linked_lists.py` script (extracted_doubly_linked_lists.lzma)')
     parser.add_argument('-max_size', type=int, default=None, help='Maximum structure size. If not specified, it is automatically defined')
     parser.add_argument('-debug', action='store_true', default=False)
     return arguments_parsing_common._get_dict_arguments(parser)

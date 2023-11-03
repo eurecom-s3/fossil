@@ -73,7 +73,7 @@ if __name__ == '__main__':
         print('[+] Step 2: Extract doubly linked lists...')
         subprocess.check_call([
             'python3',
-            'bdh_doubly_linked_lists.py',
+            'doubly_linked_lists.py',
             os.path.join(arguments['working_directory'], POINTERS_FILE),
             arguments['working_directory'],
         ])

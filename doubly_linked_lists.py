@@ -5,10 +5,10 @@ import logging
 import numpy as np
 import os
 import arguments_parsing_common
-from bdhash import BDHStack # type:ignore
-from bdhash import compute_forward_hash
-from chains import ChainGraph, PointerSet
-from chains import POINTER_SIZE
+from bidirectional_hashes import BDHStack # type:ignore
+from bidirectional_hashes import compute_forward_hash
+from chains_objects import ChainGraph, PointerSet
+from chains_objects import POINTER_SIZE
 from constants import DOUBLY_LINKED_LISTS_FILE
 from dask.bag import Bag
 from more_itertools import pairwise

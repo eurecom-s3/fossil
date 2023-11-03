@@ -11,8 +11,6 @@ from sklearn.preprocessing import LabelEncoder
 from sortedcontainers import SortedList
 from typing import Iterable, Iterator, Tuple
 
-
-
 # we use a signed representation for pointers because of two reasons:
 # 1) graph-tool doesn't support unsigned integers: https://git.skewed.de/count0/graph-tool/-/issues/390
 # 2) natural to compute differences between pointers when they're signed (by default, subtractions between unsigned
@@ -23,7 +21,6 @@ GT_POINTER_DTYPE = 'int64_t'  # 'int64_t' (graph-tool wants this format)
 
 # data structure describing the topology of a component, with number of sources, confluences and sinks
 Topology = Tuple[int, int, int]
-
 
 class ChainShape(Enum):
     """

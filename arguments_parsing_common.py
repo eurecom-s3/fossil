@@ -4,7 +4,7 @@ import dask.bag as db
 import logging
 import numpy as np
 
-from chains import PointerSet, ChainGraph
+from chains_objects import PointerSet, ChainGraph
 from dask.bag import Bag
 from dask.diagnostics import ProgressBar
 from typing import Any

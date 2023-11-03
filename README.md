@@ -5,7 +5,7 @@ This tool is a Proof-of-Concept of the technique described in the research paper
 This tool is composed by different modules:
 - `qemu_elf_dumper.py`: dumps the physical memory of a QEMU virtual machine into an ELF core file along with some other information about the hardware of the machine (archived in JSON format inside a NOTE ELF header segment)
 - `extract_features.py`: scans the VM core dump looking for strings, kernel pointers and performing static analysis using Ghidra
-- `bdh_doubly_linked_lists.py`: matches extracted pointers to find doubly linked lists
+- `doubly_linked_lists.py`: matches extracted pointers to find doubly linked lists
 - `trees.py`: extracts binary tress from the VM dump
 - `extract_structs.py`: reorganizes structures extracted by the other scripts and extracts arrays, linked lists, derived structures and children structures
 - `fossil.py`: an interactive shell to explore the results
@@ -28,7 +28,7 @@ It's also possible to run a Docker container containing Fossil and its dependenc
 - Once the dumping is finished, you can move along to `data extraction`. You can either follow the instructions below or use the `dry_run.py` script. This last one simply performs in order the following steps using the default values provided by each script.
 ### Data extraction
 - Extract pointers, strings, other metadata and perform static analysis on the ELF core dump using `extract_features.py /path/to/dump.elf /path/to/existing_path_to_results/`. This script produces various `extracted_xxx.lzma` compressed pickle files. This step can be very long due to the Ghidra static analysis phase.
-- Extract the doubly linked lists using `bdh_doubly_linked_lists.py --min-offset N_OFF --max-offset P_OFF --offset-step ALPHA --min-size SIZE /path/to/results/extracted_ptrs.lzma /path/to/results/dll.lzma`. This step can be very long and consume a huge amount of RAM.
+- Extract the doubly linked lists using `doubly_linked_lists.py --min-offset N_OFF --max-offset P_OFF --offset-step ALPHA --min-size SIZE /path/to/results/extracted_ptrs.lzma /path/to/results/dll.lzma`. This step can be very long and consume a huge amount of RAM.
 	- `N_OFF`: the minimum offset (negative)  
 	- `P_OFF`: the maximum offset (positive)
 	- These values represent the minimum and maximum offsets used for looking for next-prev relations between pointers. The higher the values, the longer is the execution time. In the tests, we used `8192` for 64-bit OS and `4096` for 32-bit ones, but for normal uses it can be possible to reduce them. Those values must be:
@@ -50,6 +50,6 @@ It is possible to build and use a Docker/Podman container including the entire f
 - To call a fossil script run `podman run --network="host" --rm --it --volume HOST_PATH_TO_DATA:/data:Z localhost/fossil:latest /fossil/COMMAND [options]`
 	- Example: in order to extract doubly linked lists having data in `/path/to/dumps` on the host execute
 	  ```bash
-	  podman run --network="host" --rm --it --volume /path/to/dumps:/data:Z localhost/fossil:latest /fossil/bdh_doubly_linked_lists.py --min-offset -8192 --max-offset 8192 --offset-step 8 --min-size 3 /data/extracted_ptrs.lzma /data/dll.lzma
+	  podman run --network="host" --rm --it --volume /path/to/dumps:/data:Z localhost/fossil:latest /fossil/doubly_linked_lists.py --min-offset -8192 --max-offset 8192 --offset-step 8 --min-size 3 /data/extracted_ptrs.lzma /data/dll.lzma
 	  ```
 - To run `qemu_elf_dumper.py` run `qemu` on the host machine and call `qemu_elf_dumper.py` inside the container with an extra option: if the bounded host path is `HOST_PATH_TO_DATA` add `-d HOST_PATH_TO_DATA` option to the command line

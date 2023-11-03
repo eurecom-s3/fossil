@@ -5,7 +5,6 @@ import compress_pickle
 import os
 import sys
 
-
 from binarytree import build as buildtree
 from cmd2.ansi import style, fg, bg
 from cmd2.cmd2 import Cmd
@@ -26,7 +25,7 @@ from constants import (
     LINKED_LISTS,
     TREES
 )
-from objects import PointersGroup, PointersArray, Tree
+from memory_objects import PointersGroup, PointersArray, Tree
 from prettytable import PrettyTable, ALL
 from statistics import mean
 from typing import Any

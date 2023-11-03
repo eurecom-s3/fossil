@@ -13,7 +13,6 @@ INV_C = np.uint64(pow(int(C), -1, 2 ** 64))
 assert C * INV_C == 1
 powers = C ** np.arange(1024, dtype=np.uint64)  # will be expanded if needed
 
-
 def _expand_powers():
     global powers
     powers = np.append(powers, C ** np.arange(len(powers), 2 * len(powers), dtype=np.uint64))
@@ -26,7 +25,6 @@ def compute_forward_hash(sequence: NDArray) -> np.uint64:
     for value, power in zip(sequence, reversed(powers[:sequence_length])):
         hash_value += power * np.uint64(value)
     return hash_value
-
 
 class PyBDHash(object):
     h0: np.uint64
@@ -101,7 +99,7 @@ class PyBDHStack:
         return self._h.hash()
 
 try:
-    from cython_bdhash import BDHash, BDHStack # type:ignore
+    from cython_bidirectional_hashes import BDHash, BDHStack # type:ignore
 except ImportError:
     logging.warn('Cython-compiled version of bdhash not available, compile with `python setup.py build_ext --inplace`')
     BDHash, BDHStack = PyBDHash, PyBDHStack

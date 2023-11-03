@@ -8,6 +8,16 @@ import logging
 import os
 import subprocess
 
+from address_translators import get_virtual_space
+from address_translators import (
+    RISCVSV32, 
+    RISCVSV39, 
+    AArch64Long, 
+    ARMShort, 
+    IntelAMD64, 
+    IntelIA32, 
+    IntelPAE
+)
 from compress_pickle import dump
 from constants import (
     VIRTUALS_TO_OFFSETS_FILE,
@@ -19,19 +29,9 @@ from constants import (
     EXTERNAL_REFERENCES_FILE,
     FUNCTIONS_FILE
 )
-from objects import ELFDump
+from memory_objects import ELFDump
 from pathlib import Path
 from uuid import uuid4
-from address_translators import get_virtual_space
-from address_translators import (
-    RISCVSV32, 
-    RISCVSV39, 
-    AArch64Long, 
-    ARMShort, 
-    IntelAMD64, 
-    IntelIA32, 
-    IntelPAE
-)
 
 data_keys = [
     'elf_dump', 'output_path', 'ignore_page',
