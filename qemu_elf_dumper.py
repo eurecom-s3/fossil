@@ -408,8 +408,7 @@ if __name__ == "__main__":
     wait_for_interrupt()
 
     # Get and process data
-    #uptime = (datetime.now() - arguments['start_time_gdb']).total_seconds()
-    uptime = 100.0
+    uptime = (datetime.now() - arguments['start_time_gdb']).total_seconds()
     print('Save registers and dump memory')
     arguments['qemu_qmp_monitor'].cmd('stop', {})
     
