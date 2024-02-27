@@ -1,248 +1,244 @@
 #!/usr/bin/env -S python3 -u
-
+import compress_pickle
+import dask.array as dask_array
 import itertools
 import logging
-from collections import defaultdict
-
-import compress_pickle
-import dask.array as da
 import numpy as np
-import sortednp as snp
-from sortedcontainers import SortedList
+import os
+import arguments_parsing_common
+import sortednp
+import sys
 
-import script_utils
-from chains import distance_threshold, PointerSet, within_threshold
-import ctypes
+from chains_objects import PointerSet
+from constants import TREES_FILE
+from numpy._typing import NDArray
+from typing import Generator
 
-POINTER_DTYPE = np.uint64
-POINTER_SIZE = 8
-
-try:
+if sys.version_info >= (3,10):
     from itertools import pairwise
-except ImportError:  # python < 3.10
+else:
     from more_itertools import pairwise
 
+def get_next_height_trees(trees:dict[tuple[np.int64,np.int64],dict[np.int64,NDArray[np.int64]]], pointers_dict:dict[np.int64,np.int64], threshold_from_offset:dict[np.int64,np.int64]) -> dict[tuple[np.int64,np.int64],dict[np.int64,NDArray[np.int64]]]:
+    new_trees: dict[tuple[np.int64,np.int64],dict[np.int64,NDArray[np.int64]]] = dict()
+    
+    # For each tree (i.e. left/right child tuple + root nodes dict)
+    #   considering left/right child as offsets
+    for offsets, root_to_nodes_dict in trees.items():
 
-def tree_elements(ptr, ptrs, offsets, depth):
-    this = np.array([ptr], dtype=POINTER_DTYPE)
-    if depth == 0:
-        return this
-    children = [tree_elements(ptrs[ctypes.c_uint64(ptr).value + ctypes.c_int32(o).value], ptrs, offsets, depth - 1) for o in offsets]
-    return snp.kway_merge(this, *children, duplicates=snp.KEEP)
+        # Get left and right offsets and threshold
+        left_offset, right_offset = offsets
+        threshold = get_minimum_tree_distance_threshold(left_offset, right_offset, threshold_from_offset)
 
-def tree_elements_breadth(root, ptrs, offsets, levels):
-    elements = [ctypes.c_uint64(root).value]
-    offsets = [ctypes.c_int32(o).value for o in offsets]
-    new_elems = []
+        # For each node
+        for node in root_to_nodes_dict:
 
-    for level in range(levels+1):
-        # print(level, len(elements))
-        new_elems.clear()
-        for next_elem in elements[2**level - 1:]:
-            if next_elem is None:
-                elements.append(None)
-                elements.append(None)
+            # Get children from pointers using offsets
+            left_child, right_child = pointers_dict[node + left_offset], pointers_dict[node + right_offset]
+
+            # If any of those isn't in the nodes, no tree
+            if left_child not in root_to_nodes_dict or right_child not in root_to_nodes_dict:
                 continue
-            else:
-                for offset in offsets:
-                    if next_elem + offset in ptrs:
-                        new_elems.append(ptrs[next_elem + offset])
-                    else:
-                        new_elems.append(None)
-        
-        if all([x is None for x in new_elems]):
-            break
-        else:
-            elements.extend(new_elems)
-    return elements
 
+            # Merge the nodes into a unique tree
+            nodes = sortednp.kway_merge(
+                np.array([node]), 
+                root_to_nodes_dict[left_child], 
+                root_to_nodes_dict[right_child], 
+            duplicates=sortednp.KEEP)
 
-def tree_depth(ptr, ptrs, offsets):  # TODO buggy when there's a loop, doesn't check distance thresholds
-    def depth(p):
-        try:
-            return min(depth(ptrs[p + o]) for o in offsets) + 1
-        except KeyError:
-            return 0
-    return depth(ptr)
-
-
-def filled_level_tree_nodes(ptr, ptrs, offsets):  # TODO buggy when there's a loop, doesn't check distance thresholds
-    def nodes(p):
-        this = np.array([p])
-        try:
-            children = [nodes(ptrs[p + o]) for o in offsets]
-        except KeyError:
-            return this
-        else:
-            return snp.kway_merge(this, *children, duplicates=snp.KEEP)
-    return nodes(ptr)
-
-
-def all_tree_nodes(ptr, ptrs, offsets):  # TODO buggy when there's a loop, doesn't check distance thresholds
-    def nodes(p):
-        to_merge = [nodes(ptrs[p + o]) for o in offsets if p + o in ptrs]
-        return snp.kway_merge(np.array([p]), *to_merge, duplicates=snp.KEEP)
-    return nodes(ptr)
-
-
-def get_len2_chains(offsets: np.ndarray, pointer_set: PointerSet):
-    assert offsets.size == 1
-    offset = offsets[0]
-    src, dst = pointer_set.src, pointer_set.dst
-    # noinspection PyTypeChecker
-    in_range: np.ndarray = abs(dst - src) >= distance_threshold(offset)
-    src, dst = src[in_range], dst[in_range]
-    dst_sorting = np.argsort(dst)
-    intersection, (pointed_ind, _) = snp.intersect(src, dst[dst_sorting] + offset, indices=True)
-    return np.stack([intersection - offset, np.repeat(offset, intersection.size), dst[pointed_ind]], axis=1)
-
-
-def get_boundaries(a):
-    return np.concatenate([[0], np.flatnonzero(a[:-1] != a[1:]) + 1, [a.size]])
-
-
-def sort_using_first(arrays, kind='mergesort'):
-    first, *others = arrays
-    sorting = np.argsort(first, kind=kind)
-    yield first[sorting]
-    yield from (a[sorting] for a in others)
-
-
-def non_unique_in_first(arrays):
-    first, *others = arrays
-    mask = np.concatenate([[False], first[:-1] == first[1:], [False]])
-    non_unique = mask[:-1] | mask[1:]
-    first = first[non_unique]
-    return get_boundaries(first), itertools.chain([first], (a[non_unique] for a in others))
-
-
-def tree_distance_threshold(o0, o1, o2t):
-    """
-    Compute the minimum distance threshold between nodes from a binary tree.
-
-    :param o0: first offset
-    :param o1: second offset
-    :param o2t: mapping from offsets to thresholds, computed from `chains.distance_threshold`
-    """
-    return max(o2t[o0], o2t[o1], abs(o1 - o0) + POINTER_SIZE, 2 * POINTER_SIZE + 1)
-
-
-def one_higher(trees, ptrs, o2t):
-    res = defaultdict(dict)
-    for offsets, trees_dict in trees.items():
-        o0, o1 = offsets
-        threshold = tree_distance_threshold(o0, o1, o2t)
-        for mid in trees_dict:
-            l, r = ptrs[mid + o0], ptrs[mid + o1]
-            if l not in trees_dict or r not in trees_dict:
-                continue
-            nodes = snp.kway_merge(np.array([mid]), trees_dict[l], trees_dict[r], duplicates=snp.KEEP)
+            # Discard if the minimum trees distance threshold is less than the minimum distance between nodes
             if np.min(np.diff(nodes)) < threshold:
                 continue
-            res[offsets][mid] = nodes
-    return res
 
+            # Initialize subdict if needed
+            if not offsets in new_trees.keys():
+                new_trees[offsets] = dict()
 
-def len_two_chains(offsets, pointer_set):
-    res = da.from_array(offsets, 1).map_blocks(get_len2_chains, pointer_set, new_axis=1).compute()
-    res = res[np.argsort(res[:, 1], kind='mergesort')]
-    return sort_using_first(res.T, 'stable')
+            # Add the subtree
+            new_trees[offsets][node] = nodes
+    return new_trees
 
+def get_minimum_tree_distance_threshold(left_offset:np.int64, right_offset:np.int64, threshold_from_offset:dict[np.int64,np.int64]) -> np.int64:
+    return np.max([
+        threshold_from_offset[left_offset],
+        threshold_from_offset[right_offset],
+        abs(right_offset - left_offset) + POINTER_SIZE,
+        np.int64(2 * POINTER_SIZE + 1)
+    ])
 
-def height_one_trees(len2_chains, o2t):
+def get_chain_boundaries(chain:NDArray[np.int64]) -> NDArray[np.int64]:
+    return np.concatenate([
+        [0], 
+        np.flatnonzero(chain[:-1] != chain[1:]) + 1, 
+        [chain.size]
+    ])
+
+def get_height_one_trees_starting_data(length_two_chains_generator:Generator[NDArray[np.int64], None, None]) -> tuple[NDArray[np.int64],itertools.chain[NDArray[np.int64]]]:
+    # Get chains
+    first_chain, *other_chains = length_two_chains_generator
+    
+    # Filter for duplicated only chains (i.e. non unique)
+    mask = np.concatenate([[False], first_chain[:-1] == first_chain[1:], [False]])
+    duplicate_mask = mask[:-1] | mask[1:]
+    first_chain = first_chain[duplicate_mask]
+
+    return get_chain_boundaries(first_chain), \
+        itertools.chain([first_chain], (chain[duplicate_mask] for chain in other_chains))
+
+def get_height_one_trees(length_two_chains_generator:Generator[NDArray[np.int64], None, None], threshold_from_offset:dict[np.int64,np.int64]) -> dict[tuple[np.int64,np.int64],dict[np.int64,NDArray[np.int64]]]:
+    """ 
+    Returns trees in the following format:
+    {
+        (left_child, right_child): {
+            root: tree
+        }
+    }
+    """
     # TODO non-binary trees should make computation explode, it seems not obvious to find a solution
-    boundaries, (roots, offsets, children) = non_unique_in_first(len2_chains)
-    n_candidates = boundaries.size - 1
-    logging.info(f'{n_candidates:,} candidate tree roots of height 1 '
-                 f'(avg. {roots.size / n_candidates:,.2} links per candidate)')
-    trees = defaultdict(dict)
+    # Get initial data
+    boundaries, (roots, offsets, children) = get_height_one_trees_starting_data(length_two_chains_generator)
+    candidates_no = boundaries.size - 1
+    logging.info(f'{candidates_no:,} candidate tree roots of height 1 (avg. {roots.size / candidates_no:,.2} links per candidate)')
+    trees: dict[tuple[np.int64,np.int64],dict[np.int64,NDArray[np.int64]]] = dict()
+    
+    # If no roots, no trees, return immediately
     if roots.size == 0:
         return trees
-    for a, b in pairwise(boundaries):
-        mid = roots[a]
-        for i in range(a, b - 1):
-            offset_l = offsets[i]
-            left_child = children[i]
-            for j in range(i + 1, b):
-                assert roots[j] == mid
-                offset_r = offsets[j]
-                assert offset_l < offset_r, (offset_l, offset_r)
-                if abs(offset_r - offset_l) < POINTER_SIZE:
+
+    # Check for trees
+    # For each couple of boundaries
+    for left_boundary, right_boundary in pairwise(boundaries):
+        
+        left_boundary: np.int64
+        right_boundary: np.int64
+
+        # Get the root (a)
+        h1_tree_root: np.int64 = roots[left_boundary]
+
+        # For each left pointer
+        for left_pointer in range(left_boundary, right_boundary - 1):
+            
+            # Get left offset and child
+            left_offset: np.int64 = offsets[left_pointer]
+            left_child: np.int64 = children[left_pointer]
+
+            # For each right pointer
+            for right_pointer in range(left_pointer + 1, right_boundary):
+                
+                # Get right offset and child
+                right_offset: np.int64 = offsets[right_pointer]
+                right_child: np.int64 = children[right_pointer]
+
+                # Confirm that it's the same root and that left offset is less than the right offset
+                assert roots[right_pointer] == h1_tree_root
+                assert left_offset < right_offset, (left_offset, right_offset)
+
+                # Discard if no pointer can fit
+                if abs(right_offset - left_offset) < POINTER_SIZE:
                     continue
-                nodes = [mid, left_child, children[j]]
-                nodes.sort()
-                nodes = np.array(nodes)
-                if np.min(np.diff(nodes)) < tree_distance_threshold(offset_l, offset_r, o2t):
+
+                # Get the nodes of h1 tree, sort them and transform them into a numpy array
+                nodes = [h1_tree_root, left_child, right_child]
+                tree: NDArray[np.int64] = np.sort(nodes)
+
+                # Discard if the minimum trees distance threshold is less than the minimum distance between nodes
+                if np.min(np.diff(tree)) < get_minimum_tree_distance_threshold(left_offset, right_offset, threshold_from_offset):
                     continue
-                trees[offset_l, offset_r][mid] = nodes
+
+                # Initialize dict if needed
+                if not (left_offset, right_offset) in trees.keys():
+                    trees[left_offset, right_offset] = dict()
+
+                # Add the tree to tress
+                trees[left_offset, right_offset][h1_tree_root] = tree
     logging.info(f'{sum(len(x) for x in trees.values()):,} 1-height binary trees ({len(trees):,} offset pairs)')
     return trees
 
+def compute_len_two_chains(encapsulated_offset: NDArray[np.int64], pointer_set: PointerSet) -> NDArray[np.int64]:
+    # Get raw offset and source and destination pointers
+    offset:np.int64 = encapsulated_offset[0]
+    src_pointers, dst_pointers = pointer_set.src_pointers, pointer_set.dst_pointers
+    
+    # Filter valid pointers by checking threshold range
+    in_range = abs(dst_pointers - src_pointers) >= get_distance_threshold(offset)
+    src_pointers, dst_pointers = src_pointers[in_range], dst_pointers[in_range]
 
-def find_trees(offsets, pointer_set):
-    o2t = {o: distance_threshold(o) for o in offsets}
-    ptrs = pointer_set.to_dict()
-    current_trees = height_one_trees(len_two_chains(offsets, pointer_set), o2t)
+    # Return len_two_chains
+    intersected_pointers, (src_pointers_indices, _) = sortednp.intersect(
+        src_pointers, 
+        dst_pointers[np.argsort(dst_pointers)] + offset, 
+        indices=True
+    )
+    return np.stack([
+        intersected_pointers - offset, 
+        np.repeat(offset, intersected_pointers.size), 
+        dst_pointers[src_pointers_indices]], 
+    axis=1)
+
+def get_length_two_chains_generator(offsets:NDArray[np.int64], pointer_set:PointerSet) -> Generator[NDArray[np.int64], None, None]:
+    # Transform into dask array
+    offsets_dask_array:dask_array.Array = \
+        dask_array.from_array(offsets, '1')
+    
+    # Compute and get a 'len two chain' for each offset
+    length_two_chains:NDArray[np.int64] = \
+        dask_array.map_blocks(
+            compute_len_two_chains, 
+            offsets_dask_array, 
+            pointer_set, 
+            new_axis=1)\
+        .compute()
+
+    # Sort chains by offset values
+    sorted_indices_by_offsets = np.argsort(length_two_chains[:, 1], kind='mergesort')
+    length_two_chains:NDArray[np.int64] = length_two_chains[sorted_indices_by_offsets]
+
+    # Return a sorted generator with the transpose of the chains
+    first_chain, *other_chains = length_two_chains.transpose()
+    sorted_indices = np.argsort(first_chain, kind='stable')
+    yield first_chain[sorted_indices]
+    yield from (chain[sorted_indices] for chain in other_chains)
+
+def get_distance_threshold(offset:np.int64) -> np.int64:
+    if offset > 0:
+        return offset + POINTER_SIZE
+    return np.max([-offset, np.int64(POINTER_SIZE)]) + 1
+
+def find_trees(offsets:NDArray[np.int64], pointer_set:PointerSet) -> Generator[dict[tuple[np.int64,np.int64],dict[np.int64,NDArray[np.int64]]], None, None]:
+    # Offset -> Threshold mapping
+    threshold_from_offset:dict[np.int64,np.int64] = {offset: get_distance_threshold(offset) for offset in offsets}
+    pointers_dict = pointer_set.to_dict()
+
+    # Retrieve len two chains
+    length_two_chains = get_length_two_chains_generator(offsets, pointer_set)
+    current_trees = get_height_one_trees(length_two_chains, threshold_from_offset)
+
     while True:
         yield current_trees
-        current_trees = one_higher(current_trees, ptrs, o2t)
+        current_trees = get_next_height_trees(current_trees, pointers_dict, threshold_from_offset)
         if not current_trees:
             break
 
-
-def recover_nodes(root, offsets, threshold, ptrs, height=None):
-    """
-    Recovers the nodes of a tree.
-
-    :param root: the root of the tree
-    :param offsets: offsets at which child pointers are located
-    :param threshold: distance threshold, obtained from tree_distance_threshold
-    :param ptrs: pointer dictionary, obtained from `chains.PointerSet.to_dict`
-    :param height: height at which to explore; if `None`, keep exploring as long as new nodes are found
-    :return: a numpy array of type `POINTER_DTYPE` containing the tree's nodes
-    """
-    res = SortedList([root])
-    parents = [root]
-    for _ in range(height) if height else itertools.count():
-        leaves = []
-        for parent in parents:
-            for o in offsets:
-                try:
-                    leaf = ptrs[parent + o]
-                except KeyError:
-                    continue
-                if within_threshold(res, threshold, leaf):
-                    leaves.append(leaf)
-        leaves.sort()
-        conflicts = set()
-        for a, b in pairwise(leaves):
-            if b - a < threshold:
-                conflicts.add(a)
-                conflicts.add(b)
-        for x in leaves:
-            if x not in conflicts:
-                res.add(x)
-        parents = leaves
-    return np.fromiter(res, POINTER_DTYPE)
-
-
-def main():
-    global POINTER_DTYPE, POINTER_SIZE
-    parser = script_utils.setup_arg_parser()
-    args = parser.parse_args()
-    if args.offset_step == 4:
+if __name__ == '__main__':
+    # Parse arguments
+    arguments = arguments_parsing_common.parse_arguments(arguments_parsing_common.get_parser())
+    
+    # Set pointer dtype and size
+    if arguments['offset_step'] == 4:
         POINTER_DTYPE = np.uint32
         POINTER_SIZE = 4
+    else:
+        POINTER_DTYPE = np.uint64
+        POINTER_SIZE = 8
 
-    script_utils.setup_logging(args)
-    offsets = script_utils.offsets(args)
-    pointer_set = script_utils.compute_pointer_set(args)
-    res = []
-    for i, t in zip(itertools.count(1), find_trees(offsets, pointer_set)):
-        res.append([(o, np.fromiter(d, POINTER_DTYPE)) for o, d in t.items()])
-        logging.info(f'{sum(len(x) for x in t.values()):,} {i}-height binary trees ({len(t):,} offset pairs)')
-    compress_pickle.dump(res, args.output)
-
-
-if __name__ == '__main__':
-    main()
+    # Find trees
+    offsets:NDArray[np.int64] = np.arange(arguments['min_offset'], arguments['max_offset'] + 1, arguments['offset_step'])
+    results:list[list[tuple[tuple[np.int64,np.int64], NDArray[np.uint32|np.uint64]]]] = []
+    for index, tree in zip(itertools.count(1), find_trees(offsets, arguments['pointers'])):
+        results.append([
+            (children, np.fromiter(root, POINTER_DTYPE)) 
+            for children, root in tree.items()
+        ])
+        logging.info(f'{sum(len(x) for x in tree.values()):,} {index}-height binary trees ({len(tree):,} offset pairs)')
+    compress_pickle.dump(results, os.path.join(arguments['output'],TREES_FILE))

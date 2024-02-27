@@ -1,210 +1,353 @@
 #!/usr/bin/env -S python3 -u
-
-# standard library
+import compress_pickle
+import itertools
 import logging
-import os
-import random
-import sys
-from tempfile import TemporaryDirectory
-
-# external dependencies
-import dask.bag as db
-from keyvi.compiler import IntDictionaryCompiler
-from keyvi.dictionary import Dictionary
-from multiprocessing.managers import SharedMemoryManager
 import numpy as np
-from xxhash import xxh3_64 as hasher_t
+import os
+import arguments_parsing_common
+from bidirectional_hashes import BDHStack # type:ignore
+from bidirectional_hashes import compute_forward_hash
+from chains_objects import ChainGraph, PointerSet
+from chains_objects import POINTER_SIZE
+from constants import DOUBLY_LINKED_LISTS_FILE
+from dask.bag import Bag
+from more_itertools import pairwise
+from numpy._typing import NDArray
 
-# imports from this project
-from chains import ChainShape
+MatchesType = tuple[list[tuple[NDArray,np.int64,NDArray,np.int64]], dict[np.int64,int]]
 
-# constants
-from script_utils import default_npartitions
+HashesType = np.dtype([('hash', np.uint64), ('direction', np.bool_), ('head', np.int64),
+                         ('tail', np.int64), ('offset', np.int32), ('size', np.uint64)])
 
-DEFAULT_MAX_HASHES_PER_ITEM = 16384
+def parse_arguments() -> dict:
+    # Get common parser and add argument
+    parser = arguments_parsing_common.get_parser()
+    parser.add_argument('--min-size', type=int, default=3, help="minimum length of chains (default: 3)")
+    return arguments_parsing_common.parse_arguments(parser)
 
-# internal precomputed stuff
-_LINE, _CYCLE = ChainShape.LINE.value, ChainShape.CYCLE.value
-_chains_dtype = np.dtype([('shape', np.int64), ('chain', object), ('cutoff', np.int64), ('offset', np.int64)])
-_rev_hash_dtype = np.dtype([('hash', np.uint64), ('head', np.int64), ('offset', np.int64), ('size', np.int64)])
-_match_dtype = np.dtype([('offset1', np.int64), ('head1', np.int64), ('offset2', np.int64), ('size', np.int64)])
+def bidirectional_hashes(graph: ChainGraph, min_size:int) -> tuple[NDArray[HashesType], NDArray[HashesType]]:
+    """
+    Computes bidirectional hashes.
+    Returns 2 multidimensional arrays: linear and cyclic
+    """
+
+    # Initialize data
+    offset = graph.offset
+    diffs_min_size = min_size - 1
+    linear_results, cyclic_results = [], []
+    
+    # Compute search
+    for cycle, rtrees in graph.component_breakdowns(min_size):
+
+        # Cyclic search
+        if cycle is not None:
+            first_hash = compute_forward_hash(np.diff(cycle))
+            second_hash = compute_forward_hash(np.diff(np.roll(cycle, -1)[::-1]))
+            
+            # no palindromic sequences or hash conflicts
+            assert first_hash != second_hash
+
+            hashed, direction, head, tail = (second_hash, 1, cycle[1], cycle[0])
+            if first_hash < second_hash:
+                hashed, direction, head, tail = (first_hash, 0, cycle[0], cycle[-1])
+            
+            cyclic_results.append((
+                hashed, 
+                direction, 
+                head, 
+                tail, 
+                offset, 
+                cycle.size
+            ))
+
+        # Linear search
+        for sink, parent_mapping in rtrees:
+            diffs = BDHStack()
+
+            stack:list[tuple[np.int64, np.int64, np.int64]]
+            stack = [
+                (np.int64(0), sink, parent) 
+                for parent in parent_mapping[sink]
+            ]
+
+            while stack:
+                depth, child, parent = stack.pop()
+                while len(diffs) != depth:
+                    assert len(diffs) > depth
+                    diffs.pop()
+                
+                diffs.append(child - parent)
+                depth += 1
+                assert depth == len(diffs)
+
+                if depth >= diffs_min_size:
+                    first_hash, second_hash = diffs.hash()
+
+                    # fails for palindromic sequences or hash conflicts
+                    assert first_hash != second_hash, list(diffs)  
+
+                    hashed, direction = (second_hash, 1)
+                    if first_hash < second_hash:
+                        hashed, direction = (first_hash, 0)
+                    
+                    linear_results.append((
+                        hashed, 
+                        direction, 
+                        parent, 
+                        sink, 
+                        offset, 
+                        depth + 1
+                    ))
+                stack.extend(
+                    (depth, parent, grandpa) 
+                    for grandpa in parent_mapping.get(parent, [])
+                )
+
+    # Process results 
+    linear = np.array(linear_results, HashesType)
+    cyclic = np.array(cyclic_results, HashesType)
+    linear.sort(order=('size', 'hash', 'direction'))
+    cyclic.sort(order=('size', 'hash', 'direction'))
+
+    return linear, cyclic
+
+def get_unique_indices(array:NDArray) -> NDArray:
+    """
+    Returns the indices of each first unique element of the sorted array
+    """
+
+    if array.size == 0:
+        return np.array([])
+    mask = np.empty(array.shape, dtype=np.bool_)
+    mask[0] = True
+    mask[1:] = array[1:] != array[:-1]
+    return np.flatnonzero(mask)
+
+def get_parameters_boundaries(rows:NDArray, assigned:dict) -> list[tuple[tuple[np.int64,np.int64,np.int64],tuple[np.int64,np.int64]]]:
+            """
+            Calculates paramaters for building the chain
+            Results are sorted by lowest right boundary
+            The reference object is the head if direction == 0, tail otherwise.
+
+            Returns a list with the following structure:
+            - (
+                (head:int, offset:int, size:int),
+                (left_boundary:int, right_boundary:int)
+            )
+            """
+
+            result = []
+            for _, direction, head, tail, offset, size in rows:
+                
+                # Skip rows containing already assigned heads or tails
+                if head in assigned:
+                    continue
+                if tail in assigned:  # skip rows containing already assigned heads or tails
+                    continue
+
+                # Get starting pointer
+                pointer = head
+                if direction:
+                    pointer = tail
+
+                # By subtracting the offset we get what was pointed by the previous element
+                pointed = pointer - offset
+
+                # Get the boundaries
+                boundaries = (
+                    pointer,
+                    max(pointer + POINTER_SIZE + 1, pointed + 1)
+                )
+                if offset > 0:
+                    boundaries = (
+                        pointed,
+                        pointer + POINTER_SIZE
+                    )
+
+                result.append((
+                    (head, offset, size), 
+                    boundaries
+                ))
+
+            # Sort the results from the lowest right boundary
+            result.sort(key=lambda pair: pair[1][1])
+            return result
+
+def compute_chain(pointers: dict[np.int64,np.int64], head:np.int64, offset:np.int64, size:np.int64):
+    """Compute a chain using the pointers dictionary."""
+
+    result = [head]
+    while len(result) < size:
+        head = pointers[head] + offset
+        result.append(head)
+    return np.array(result, dtype=np.uint64).astype(np.int64)
+
+def compute_matches(data: NDArray[HashesType], pointers: dict[np.int64, np.int64], label: str) -> MatchesType:
+    """
+    Find matches from the computed hashes.
+    Returns a list (matches) and a dict (assigned)
+    """
+
+    # First check
+    if not len(data):
+        return [], {}
+
+    # Data sorting
+    # ------------
+    #   This sorting allows grouping by hash then direction
+    #   We'll start from the bottom to prioritize longer lists
+    #   Mergesort specifies Timsort, which is faster for almost-sorted data
+    data.sort(order=('size', 'hash', 'direction'), kind='mergesort')
+
+    # Data filtering
+    # --------------
+    # Take only duplicate values. See how np.unique is implemented to get how this works.
+    non_unique_mask:NDArray[bool] = np.concatenate([~np.diff(data['hash']).astype(bool), [False]])
+    non_unique_mask |= np.roll(non_unique_mask, 1)
+    data = data[non_unique_mask]
+
+    logging.info(f'{label}: {data.size:,} non-unique hashes')
+    assigned = {}
+    matches = []
+
+    # Data transformation for elaboration
+    unique_hash_indices = get_unique_indices(data['hash'])
+    chained_unique_indices = itertools.chain(unique_hash_indices, [None])
+    paired_unique_indices = list(pairwise(chained_unique_indices))
 
 
-def _create_shared_memory_array(a, smm):
-    shape, dtype = a.shape, a.dtype
-    shm = smm.SharedMemory(size=a.nbytes)
-    b = np.ndarray(shape, dtype, shm.buf)
-    b[:] = a[:]
-    return shm, shape, dtype
+    # We start from the bottom to give priority to longest chains
+    for first_index, second_index in paired_unique_indices[::-1]:
 
+        # This group contains all elements having the same (size, hash) pair
+        group = data[first_index:second_index]
+        assert len(set(group['hash'])) == 1
+        assert len(set(group['size'])) == 1
 
-def _get_shared_memory_array(ref):
-    shm, shape, dtype = ref
-    return np.ndarray(shape, dtype, shm.buf)
+        # Index discriminating between the two directions
+        changing_direction_index = np.searchsorted(group['direction'], 1)
 
-
-def _process_chains(g, min_size):
-    slicer = -min_size + 1  # with min_size=3, this is -2
-    offset = g.offset
-    seen_ptrs = set()
-    for shape, chain in sorted(g.chains(min_size), key=lambda t: len(t[1]), reverse=True):
-        if shape == ChainShape.CYCLE:
-            yield shape.value, chain, 1, offset
-        else:
-            assert shape == ChainShape.LINE
-            default_cut = chain.size + slicer  # note that slicer is negative
-            cut = next((i for i, elem in enumerate(chain[:default_cut]) if elem in seen_ptrs),
-                       default_cut)  # default value
-            if cut == 0:
-                continue
-            yield shape.value, chain, cut, offset
-            seen_ptrs.update(chain[:cut])
-
-
-def _split_long_chains(t, max_hashes_per_item):
-    shape, chain, cutoff, offset = t
-    while cutoff > max_hashes_per_item:
-        yield shape, chain, max_hashes_per_item, offset
-        chain = chain[max_hashes_per_item:]
-        cutoff -= max_hashes_per_item
-    yield shape, chain, cutoff, offset
-
-
-def _hash_reversed_diff(chains):
-    res = []
-    hasher = hasher_t()
-    for shape, chain, n, offset in chains:
-        inv_chain = chain[::-1]
-        inv_diff = np.diff(inv_chain)
-        if shape == _CYCLE:
-            hasher.reset()
-            hasher.update(inv_diff)
-            res.append((hasher.intdigest(), chain[0], offset, chain.size))
+        # Hashes in just a single direction: no possible matches
+        if not (0 < changing_direction_index < group.size):
             continue
-        else:
-            assert shape == _LINE
-            hasher.reset()
-            skipped = inv_diff.size - n
-            hasher.update(inv_diff[:skipped])
-            for d, elem, size in zip(inv_diff[skipped:], inv_chain[skipped + 1:], range(skipped + 2, chain.size + 1)):
-                hasher.update(d)
-                res.append((hasher.intdigest(), elem, offset, size))
-    return [np.array(res, _rev_hash_dtype)]
 
+        # Get forward referencing pointers
+        forward = get_parameters_boundaries(group[:changing_direction_index], assigned)
+        if len(forward) == 0:
+            continue
 
-def _hash_matches(chains, rev_hashes_ref, h2i_filename):
-    rev_hashes = _get_shared_memory_array(rev_hashes_ref)
-    h2i = Dictionary(h2i_filename)
-    res = set()
-    hasher = hasher_t()
+        # Get backward referencing pointers
+        # We use a dictionary because it preserves insertion order (by right boundary)
+        backward = dict(get_parameters_boundaries(group[changing_direction_index:], assigned))
+        if len(backward) == 0:
+            continue
 
-    def add_matches(diff_array, head, chain_size):
-        hasher.reset()
-        hasher.update(diff_array)
-        match = h2i.get(hasher.digest())
-        if match is None:
-            return False
-        idx = match.GetValue()
-        tail = chain[-1]
-        pointed_tail = tail - offset
-        min_diff = np.abs(diff_array).min()
-        int_h_first = rev_hashes[idx][0]
-        found = False
-        for int_h_other, head_other, offset_other, size_other in rev_hashes[idx:]:
-            if int_h_other != int_h_first:
-                break  # we got to another hash, stop iterating
-            if size_other != chain_size:
-                logging.warning(f"Hash collision found at hash {int_h_other}!")
-                continue  # a hash collision--should be extremely unlikely
-                # we don't find all collisions this way; false positives are extremely unlikely but still possible
-            if max(abs(pointed_tail - head_other + offset_other), abs(offset_other - offset)) > min_diff:
-                continue  # the two chains are too far away to be a doubly linked list
-            found = True
-            if (offset, head) < (offset_other, head_other):
-                res.add((offset, head, offset_other, head_other, chain_size))
-            else:
-                res.add((offset_other, head_other, offset, head, chain_size))
-        return found
+        # Get forward pointing chain
+        chain = compute_chain(pointers, *forward[0][0])
+        diff = np.diff(chain)
+        min_diff = np.min(np.diff(np.sort(chain)))
+        assert min_diff > 0
 
-    for shape, chain, n, offset in chains:
-        if shape == _CYCLE:
-            chain = np.roll(chain, -1)
-            add_matches(np.diff(chain), chain[0], chain.size)
-        else:
-            assert shape == _LINE
-            diff = np.diff(chain)
-            size = chain.size
-            for i in range(n):
-                if add_matches(diff[i:], chain[i], size - i):
+        for (forward_head, forward_offset, forward_size), (forward_left, forward_right) in forward:
+            # The object must be in the interval:
+            #   min(backward_left, forward_left) <= object < max(backward_right, forward_right)
+            # having the interval <= min_diff
+            
+            # These thresholds are respectively minimum and maximum values for backward_left and backward_right
+            min_threshold = forward_right - min_diff
+            max_threshold = forward_left + min_diff
+
+            candidates, to_delete = [], []
+            for backward_parameters, (backward_left, backward_right) in backward.items():
+                
+                # Since min_threshold depends on forward_right, backward_parameters wont' match any more
+                if backward_left < min_threshold:
+                    to_delete.append(backward_parameters)  # we can't delete from bwd right now, since we're iterating on it
+                    continue
+                
+                # Because of the sorting, we won't find any more matches with the forward chain
+                if backward_right > max_threshold:
                     break
-    return res
 
+                candidates.append(backward_parameters)
 
-def search(graphs: db.core.Bag, min_size: int = 3, npartitions: int = default_npartitions(),
-           max_hashes_per_item: int = DEFAULT_MAX_HASHES_PER_ITEM, shuffle: bool = True, tmp_dir: str = None):
-    logging.info("Computing chains")
-    chains = graphs.map(_process_chains, min_size).flatten()\
-        .map(_split_long_chains, max_hashes_per_item).flatten()
-    if shuffle:
-        chains = chains.compute()
-        logging.info("Shuffling to distribute load")  # TODO find a way to do it in a non-single-threaded way
-        random.shuffle(chains)
-        chains = db.from_sequence(chains, npartitions=npartitions).persist()
-    else:
-        chains = chains.repartition(npartitions).persist()
-    logging.info("Computing backward hashing_data")
-    rev_hashes = chains.map_partitions(_hash_reversed_diff).compute()
-    rev_hashes = np.concatenate(rev_hashes)
-    rev_hashes = rev_hashes[np.argsort(rev_hashes['hash'])]
-    logging.info(f"{rev_hashes.size:,} hashing_data computed")
+            for backward_parameters in to_delete:
+                del backward[backward_parameters]
 
-    logging.info("Computing hash-to-index mapping")
-    compiler = IntDictionaryCompiler()
-    hashes, index = np.unique(rev_hashes['hash'], return_index=True)
-    if sys.byteorder == 'little':
-        hashes = hashes.newbyteorder()
-    for h, i in zip(hashes, index):
-        compiler.Add(h.tobytes(), int(i))
-    compiler.Compile()
-    with TemporaryDirectory(dir=tmp_dir) as d:
-        h2i_filename = os.path.join(d, 'h2i.kv')
-        compiler.WriteToFile(h2i_filename)
-        logging.info("Computing matches")
-        with SharedMemoryManager() as smm:
-            smm: SharedMemoryManager  # shuts up a PyCharm type checker warning
-            rev_hashes = _create_shared_memory_array(rev_hashes, smm)
-            return set(chains.map_partitions(_hash_matches, rev_hashes, h2i_filename).compute())
+            if not candidates:
+                continue
 
+            forward_chain = compute_chain(pointers, forward_head, forward_offset, forward_size)
 
-def main():
-    import argparse
+            # Hash collision check
+            assert np.array_equal(np.diff(forward_chain), diff)
 
-    import compress_pickle
-    from dask.diagnostics import ProgressBar
+            # Discard already assigned pointers
+            if any(pointer in assigned for pointer in forward_chain):
+                continue
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('filenames', nargs='+')
-    parser.add_argument('result')
-    parser.add_argument('--min-size', type=int, default=3, help="minimum length of chains")
-    parser.add_argument('--npartitions', type=int, default=default_npartitions())
-    parser.add_argument('--max-hashing_data-per-item', type=int, default=DEFAULT_MAX_HASHES_PER_ITEM)
-    parser.add_argument('--no-shuffle', action='store_true')
-    parser.add_argument('--tmp-dir', help="directory in which to store temporary data")
-    parser.add_argument('--silent', action='store_true')
-    args = parser.parse_args()
+            # Try to match candidates. Closest ones first
+            forward_head = forward_chain[0]
+            sorted_candidates = sorted(candidates, key=lambda params: abs(forward_head - params[0]))
+            for backward_parameters in sorted_candidates:
+                backward_head, backward_offset, backward_size = backward_parameters
+                assert backward_size == forward_size
 
-    # noinspection PyArgumentList
-    logging.basicConfig(format="{levelname} {asctime} {message}", style='{',
-                        level=logging.WARNING if args.silent else logging.INFO)
-    if not args.silent:
-        ProgressBar().register()
-    graphs = db.from_sequence(args.filenames, npartitions=min(len(args.filenames), args.npartitions))\
-        .map(compress_pickle.load)
-    matches = search(graphs, args.min_size, args.npartitions, args.max_hashes_per_item, not args.no_shuffle,
-                     args.tmp_dir)
-    logging.info(f"{len(matches):,} matches found")
-    compress_pickle.dump(matches, args.result)
+                backward_chain = compute_chain(pointers, backward_head, backward_offset, backward_size)
 
+                # Hash collision check
+                assert np.array_equal(np.diff(backward_chain[::-1]), diff)
+
+                # Discard already assigned
+                if any(pointer in assigned for pointer in backward_chain):
+                    del backward[backward_parameters]
+                    continue
+
+                # Discard both direction pointers
+                assert len(set(forward_chain) & set(backward_chain)) == 0
+
+                # Interval size respected
+                assert forward_chain[0] - backward_chain[-1] <= min_diff
+
+                # Check correspondence between pointers (from different directions)
+                assert (np.diff(forward_chain - backward_chain[::-1]) == 0).all()
+                
+                # Match found! Let's go!
+                matches_no = len(matches)
+                matches.append((forward_chain, forward_offset, backward_chain, backward_offset))
+
+                # Assign pointers
+                for chain in [backward_chain, forward_chain]:
+                    for pointer in chain:
+                        assigned[pointer] = matches_no
+            
+                # Remove backward parameters
+                del backward[backward_parameters]
+                break
+    return matches, assigned
+
+def search_linear_and_cyclic_matches(graphs:Bag, min_size:int, pointer_set:PointerSet) -> tuple[MatchesType, MatchesType]:
+    pointers:dict[np.int64, np.int64] = pointer_set.to_dict()
+    bd_hashes:zip[tuple[NDArray,NDArray]] = zip(*graphs.map(bidirectional_hashes, min_size).compute())
+    
+    linear, cyclic = [
+        np.concatenate(arrays) 
+        for arrays in bd_hashes
+    ]
+    linear: NDArray[HashesType]
+    cyclic: NDArray[HashesType]
+    
+    logging.info(f'hashes: {linear.size:,} (linear), {cyclic.size:,} (cyclic)')
+    return compute_matches(linear, pointers, 'linear'), \
+            compute_matches(cyclic, pointers, 'cyclic')
 
 if __name__ == '__main__':
-    main()
+    arguments = parse_arguments()
+    results = search_linear_and_cyclic_matches(arguments['graphs'], arguments['min_size'], arguments['pointers'])
+    for name, (match_list, pointer_to_match) in zip(['linear', 'cycles'], results):
+        matches_no = len(match_list)
+        try:
+            logging.info(f'{name}: {matches_no:,} lists (avg length {len(pointer_to_match) / matches_no:,.2f})')
+        except ZeroDivisionError:
+            logging.info('Something was wrong, 0 matches... :(')
+    compress_pickle.dump(results, os.path.join(arguments['output'], DOUBLY_LINKED_LISTS_FILE))
